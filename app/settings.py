@@ -20,6 +20,8 @@ _CONFIG = os.path.join(_ROOT, "config.json")
 _DEFAULT_RELATIONSHIP = "romantic partners"
 _DEFAULT_CONTEXT = 10
 _DEFAULT_JEV = "openrouter"
+# 采集目标：auto 按 APPS 顺序/前台窗口自动挑，其余强制指定某个聊天软件。
+CAPTURE_APPS = ("auto", "wechat", "telegram", "kakaotalk")
 _DEFAULT_DRAFT = "deepseek"
 
 
@@ -31,6 +33,11 @@ def _read(name: str, default=None):
     except (OSError, ValueError):
         return default
     return default if value is None else value
+
+def capture_app() -> str:
+    """采集哪个聊天软件；auto = 按前台/内置顺序自动挑。"""
+    v = str(_read("capture_app") or "auto").strip().lower()
+    return v if v in CAPTURE_APPS else "auto"
 
 def relationship() -> str:
     return str(_read("relationship") or _DEFAULT_RELATIONSHIP)
@@ -158,7 +165,7 @@ def save(relationship_text: str | None = None, context_n: int | None = None, *,
          draft_base_url_text: str | None = None, reply_target_on: bool | None = None,
          style_text: str | None = None, thinking_on: bool | None = None,
          check_update_on: bool | None = None, debug_view_on: bool | None = None,
-         lang_text: str | None = None) -> None:
+         lang_text: str | None = None, capture_app_text: str | None = None) -> None:
     """每个参数为空/None = 保留当前值。两把 key 写进程环境 + HKCU\\Environment，不写任何文件。"""
     jev = jev_provider_text if jev_provider_text in JEV_PROVIDERS else jev_provider()
     draft = draft_provider_text if draft_provider_text in DRAFT_PROVIDERS else draft_provider()
@@ -188,6 +195,7 @@ def save(relationship_text: str | None = None, context_n: int | None = None, *,
         "thinking": flag(thinking_on, thinking),
         "check_update": flag(check_update_on, check_update),
         "debug_view": flag(debug_view_on, debug_view),
+        "capture_app": capture_app_text if capture_app_text in CAPTURE_APPS else capture_app(),
     }
     lang = _read("lang") if lang_text is None else lang_text.strip().lower()
     if lang is not None:

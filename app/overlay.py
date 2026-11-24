@@ -29,6 +29,14 @@ from app.i18n import LANGUAGES, T, bind
 _LOG_LINES = 300
 _MUTED = "#68776f"
 _GREEN = "#18794e"
+# 采集目标下拉：标签 → settings.capture_app() 的键。产品名不翻译。
+_CAPTURE_APPS = [
+    ("自动（前台优先）", "auto"),
+    ("微信", "wechat"),
+    ("Telegram", "telegram"),
+    ("KakaoTalk", "kakaotalk"),
+]
+
 _RELATIONSHIPS = [
     ("恋人", "romantic partners"), ("朋友", "friends"), ("同事", "colleagues"),
     ("家人", "family"), ("自定义", None),
@@ -233,7 +241,7 @@ class _ReplyCard(_Surface):
 
 class Overlay:
     def __init__(self, on_fill, on_toggle_capture=None, on_target_change=None, result_of=None,
-                 on_toggle_debug=None, on_language_changed=None):
+                 on_toggle_debug=None, on_language_changed=None, on_capture_restart=None):
         """result_of(会话名) → 那个会话上次的结果或 None；切着看别的会话时用它把旧结果放回来。
         on_target_change(会话名, 人名) → 用户在群里挑了回复对象。
         on_toggle_debug(开不开) → 开关调试视图那个独立窗口。"""
@@ -245,6 +253,7 @@ class Overlay:
         self.on_target_change = on_target_change
         self.on_toggle_debug = on_toggle_debug
         self.on_language_changed = on_language_changed
+        self.on_capture_restart = on_capture_restart
         self.result_of = result_of
         self.cands = []
         self.cards = []
@@ -523,6 +532,25 @@ class Overlay:
         self.languageOverrideHint = _tlabel("本次选择立即生效；下次启动仍优先使用 JEVCHAT_LANG 指定的语言。", 12, _MUTED)
         box.addWidget(self.languageOverrideHint)
         body.addWidget(language)
+
+        capture = _Surface()
+        box = QVBoxLayout(capture)
+        box.setContentsMargins(16, 16, 16, 18)
+        box.setSpacing(12)
+        box.addWidget(_tlabel("采集聊天软件", 16, "#304c3c", True))
+        capture_label = _tlabel("采集哪个聊天软件", 13)
+        box.addWidget(capture_label)
+        self.captureBox = ComboBox()
+        self.captureBox.setMinimumWidth(0)
+        self.captureBox.addItems([name for name, _key in _CAPTURE_APPS])
+        bind(self.captureBox, "采集哪个聊天软件", "setAccessibleName")
+        capture_label.setBuddy(self.captureBox)
+        box.addWidget(self.captureBox)
+        box.addWidget(self._hint(
+            "自动：优先采当前前台的那个聊天软件，否则按微信 → KakaoTalk → Telegram 的顺序。"
+            "同时开着多个时，直接选指定的那个最稳；保存后会重启采集。"
+        ))
+        body.addWidget(capture)
 
         body.addWidget(_tlabel("调整关系背景，配置判断和起草用的两个模型。", 13, _MUTED))
         preference = _Surface()
@@ -839,6 +867,9 @@ class Overlay:
         self.relationshipBox.setCurrentIndex(index)
         self.relEdit.setText(relationship if _RELATIONSHIPS[index][1] is None else "")
         self.relEdit.setVisible(_RELATIONSHIPS[index][1] is None)
+        capture_key = settings.capture_app()
+        self.captureBox.setCurrentIndex(next((i for i, (_n, k) in enumerate(_CAPTURE_APPS)
+                                              if k == capture_key), 0))
         self.styleEdit.setText(settings.style())
         self.contextBox.setValue(settings.context())
         self.targetSwitch.setChecked(settings.reply_target())
@@ -876,6 +907,8 @@ class Overlay:
                 self._settings_feedback(lambda: T("{name} 请先获取并选择一个模型。").format(name=name), error=True)
                 group.modelBox.setFocus()
                 return
+        capture_before = settings.capture_app()
+        capture_key = _CAPTURE_APPS[self.captureBox.currentIndex()][1]
         try:
             settings.save(relationship, self.contextBox.value(),
                           jev_provider_text=jev_provider,
@@ -888,11 +921,14 @@ class Overlay:
                           reply_target_on=self.targetSwitch.isChecked(),
                           style_text=self.styleEdit.text().strip(),
                           thinking_on=self.thinkingSwitch.isChecked(),
-                          check_update_on=self.updateSwitch.isChecked())
+                          check_update_on=self.updateSwitch.isChecked(),
+                          capture_app_text=capture_key)
         except Exception:
             self._settings_feedback("保存失败，请检查配置文件是否可写后重试。", error=True)
             return
         self._load_settings()
+        if capture_key != capture_before and self.on_capture_restart is not None:
+            self.on_capture_restart()   # 目标换了：让父进程重开采集子进程
         self._render_targets()  # 开关刚改过，回到首页时这一行该显该藏得重算一次
         self._settings_feedback("设置已保存，将用于下一次回复。")
         self.setupButton.hide()

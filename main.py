@@ -32,6 +32,12 @@ results = queue.Queue()
 update_result = queue.Queue()  # 独立小队列，别跟 results 的 (kind, r, title, revision) 形状搅在一起
 
 
+def wanted_app():
+    """设置里指定的采集目标；auto = 让 find_chat_hwnd 自己挑（前台优先/内置顺序）。"""
+    key = settings.capture_app()
+    return None if key == "auto" else chatapps.get(key)
+
+
 def chat_of(title):
     return chats.setdefault(title, {"history": deque(maxlen=60), "result": None, "rev": 0,
                                     "target": None, "senders": []})
@@ -103,7 +109,7 @@ def on_toggle_capture(on):
         return
     if child is None:
         try:
-            state["hwnd"], found = find_chat_hwnd()
+            state["hwnd"], found = find_chat_hwnd(wanted_app())
             state["app"] = found.key
         except RuntimeError:
             ov.set_capture(False, "未找到聊天窗口，打开后再开启采集")
@@ -273,12 +279,34 @@ if __name__ == "__main__":  # Windows 的 spawn 会让子进程重新执行本�
     capture_on = multiprocessing.Event()  # 父子进程共用的开关，置位=采集
     debug_on = multiprocessing.Event()  # 同上，置位=子进程往队列里送整帧给调试窗
     child = dbg = None
+    def restart_capture():
+        """设置里换了采集目标：停掉旧子进程，按新目标重找窗口再开一个。"""
+        global child
+        if child is not None:
+            capture_on.clear()
+            child.terminate()
+            child.join(timeout=1.0)
+            child = None
+        state["area"] = None
+        try:
+            state["hwnd"], found = find_chat_hwnd(wanted_app())
+            state["app"] = found.key
+        except RuntimeError:
+            state["hwnd"] = None
+            capture_on.clear()
+            ov.set_capture(False, "未找到聊天窗口，打开后再开启采集")
+            return
+        child = spawn_worker()
+        capture_on.set()
+        ov.set_capture(True)
+
     ov = Overlay(on_fill=fill_reply, on_toggle_capture=on_toggle_capture,
                  on_target_change=on_target_change, on_toggle_debug=set_debug,
                  on_language_changed=on_language_changed,
+                 on_capture_restart=restart_capture,
                  result_of=lambda t: chats.get(t, {}).get("result"))
     try:
-        state["hwnd"], found = find_chat_hwnd()
+        state["hwnd"], found = find_chat_hwnd(wanted_app())
         state["app"] = found.key
     except RuntimeError:
         ov.set_capture(False, "未找到聊天窗口，打开后再开启采集")
