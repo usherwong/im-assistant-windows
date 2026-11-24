@@ -65,7 +65,7 @@ def run(q, hwnd, enabled, debug_on, app_key=None):
             full = cap.settled()
             if full is not None:
                 reader, lines = None, []  # 调试视图要用，消息区没认出来时就是空的
-                area = chat_area(full)  # 每次停稳都重算：拖完窗口微信布局会晚一拍才铺好，只按尺寸变化算一次会锁死
+                area = chat_area(full, app.header_h)  # 每次停稳都重算：拖完窗口微信布局会晚一拍才铺好，只按尺寸变化算一次会锁死
                 if area is None:
                     if not warned:
                         q.put(("status", "消息区认不出来（窗口太小？）"))

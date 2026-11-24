@@ -48,6 +48,13 @@ def find_chat_hwnd(want=None):
     u32.EnumWindows(cb, 0)
     if not found:
         raise RuntimeError("没找到聊天窗口，开着吗？")
+    # 多个渠道同时开着时，用户正在看的那个优先（否则 APPS 顺序会让 Telegram 永远输给微信）
+    fg = u32.GetForegroundWindow()
+    if fg:
+        root = u32.GetAncestor(fg, 2) or fg      # GA_ROOT
+        for f in found:
+            if f[0] in (fg, root):
+                return f[0], f[3]
     for app in chatapps.APPS.values():
         mine = [f for f in found if f[3] is app]
         if not mine:

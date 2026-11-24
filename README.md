@@ -82,11 +82,17 @@ DeepSeek 官方 API（`api.deepseek.com`）国内直连，起草基本就是一�
 |---|---|---|---|
 | 微信 | RapidOCR（中英文模型） | 绿色 | 标题为「微信」的主窗口 |
 | KakaoTalk（韩国） | Windows.Media.Ocr（系统语言包，离线） | `#FEE500` | 一个对话一个窗口，主列表窗除外 |
+| Telegram（Desktop） | RapidOCR（中英文模型） | 几何：气泡贴右 | 标题为「Telegram」的主窗口 |
 
 RapidOCR 自带的只有中英文模型，韩文整段都是乱码：同一个 KakaoTalk 窗口实测 8 条气泡 0 条认对，
 一帧 2.0s，而且全被判成对方发的（气泡颜色规则只认微信绿）。韩文界面改走 Windows 自带 OCR 之后
 9 条全认对、自己/对方分得清，一帧 0.20s。做法和实测见 [docs/KOREAN.md](docs/KOREAN.md)；
-新增一个软件只要在 `app/chatapps.py` 里加一行。
+新增一个软件只要在 `app/chatapps.py` 里加一条 profile。
+
+Telegram Desktop 是 Qt 应用，主题/壁纸配色不固定，所以不用「气泡颜色」判自己——改成**几何归属**：
+气泡贴左=对方、贴右=我、居中不贴边=不参与（`chatapps.side_by_geometry`）。填入点输入区正中再
+Ctrl+V，不碰「发送」。这是首版，默认主题下应可直接用；自定义壁纸/分栏布局如果识别不稳，
+把调试视图的截图和日志发出来再调 `chat_area` 的像素锚点。
 
 ## 截图
 

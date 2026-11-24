@@ -23,6 +23,24 @@ def _kakao_me(bg: np.ndarray) -> bool:
     return bool(bg[0] > 200 and bg[1] > 180 and bg[2] < 120)
 
 
+def _never_me(bg: np.ndarray) -> bool:
+    """几何判归属的渠道用不到颜色规则；保留占位，避免 who_said 走错分支。"""
+    return False
+
+
+def side_by_geometry(x0: float, x1: float, width: int) -> str | None:
+    """按气泡在聊天区里的水平位置判归属：贴左=对方，贴右=我，居中不贴边=不参与。
+
+    Telegram Desktop 的主题/壁纸配色不固定（浅色绿泡、深色蓝泡、自定义主题），
+    颜色规则不可靠；左右贴边是跨主题稳定的信号。"""
+    center = (x0 + x1) / 2.0 / max(width, 1)
+    if center <= 0.45:
+        return "her"
+    if center >= 0.55:
+        return "me"
+    return None
+
+
 def _kakao_notice_rows(chat: np.ndarray) -> int:
     """KakaoTalk 群聊置顶公告：一张几乎铺满面板宽度的白卡片，贴在消息区顶上。
     气泡最宽也就六七成宽，所以「整行白色占宽度 80% 以上」只会是公告卡。
@@ -46,6 +64,10 @@ class ChatApp:
     join: str                    # how OCR fragments inside one bubble are glued
     is_me: Callable[[np.ndarray], bool]
     trim_top: Callable[[np.ndarray], int] = lambda chat: 0  # rows to skip (pinned notice, ...)
+    side: str = "color"          # "color": is_me 判归属；"geometry": 贴左/贴右
+    fill_click: str = "left"     # "left": 输入区左侧固定偏移；"center": 输入区水平中点
+    header_h: int = 60           # chat_area 的头部兜底高度（物理像素，100% DPI）
+    strip_time: bool = False     # 气泡内嵌的时间/已读标记要不要从正文里剥掉
 
 
 WECHAT = ChatApp("wechat", "微信", ("weixin.exe", "wechat.exe"), "微信", (),
@@ -55,7 +77,13 @@ WECHAT = ChatApp("wechat", "微信", ("weixin.exe", "wechat.exe"), "微信", (),
 KAKAOTALK = ChatApp("kakaotalk", "카카오톡", ("kakaotalk.exe",), "", ("카카오톡", ""),
                     "windows", " ", _kakao_me, _kakao_notice_rows)
 
-APPS = {a.key: a for a in (WECHAT, KAKAOTALK)}
+# Telegram Desktop（Qt）：窗口标题固定 "Telegram"，一个窗口一个会话；没有微信那套风控，
+# 但辅助功能也不可靠，所以读屏仍走截图 OCR，归属用几何判，填入点输入区正中。
+TELEGRAM = ChatApp("telegram", "Telegram", ("telegram.exe",), "Telegram", (),
+                   "rapidocr", "", _never_me,
+                   side="geometry", fill_click="center", strip_time=True)
+
+APPS = {a.key: a for a in (WECHAT, KAKAOTALK, TELEGRAM)}
 DEFAULT = WECHAT
 
 
@@ -70,6 +98,11 @@ def get(key: str | None) -> ChatApp:
 if __name__ == "__main__":  # 自测：颜色规则用实测像素锁住，改错了当场炸
     assert by_exe("kakaotalk.exe") is KAKAOTALK and by_exe("weixin.exe") is WECHAT
     assert by_exe("chrome.exe") is None and get(None) is DEFAULT and get("kakaotalk") is KAKAOTALK
+    assert by_exe("telegram.exe") is TELEGRAM and TELEGRAM.side == "geometry"
+    assert TELEGRAM.fill_click == "center" and TELEGRAM.strip_time
+    assert side_by_geometry(10, 100, 400) == "her"      # 贴左
+    assert side_by_geometry(300, 390, 400) == "me"      # 贴右
+    assert side_by_geometry(150, 250, 400) is None      # 居中不贴边
     kakao_bubble, kakao_other, kakao_ground = (254, 229, 0), (255, 255, 255), (186, 206, 224)
     assert KAKAOTALK.is_me(np.array(kakao_bubble))
     assert not KAKAOTALK.is_me(np.array(kakao_other))

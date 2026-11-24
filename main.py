@@ -14,6 +14,7 @@ import traceback
 from collections import deque
 
 from app import settings, update, worker
+from app import chatapps
 from app.capture import find_chat_hwnd
 from app.fill import fill
 from app.overlay import Overlay
@@ -53,7 +54,7 @@ def fill_reply(text):
         target = target_of(ov.current_chat())  # 填进去的是界面上正看着的那个会话的对象
         if target:
             text = f"@{target} " + text  # 纯文本，微信不认成真正的 @，只是让群里看得出在跟谁说
-    fill(state["hwnd"], state["area"], text)
+    fill(state["hwnd"], state["area"], text, chatapps.get(state.get("app")))
 
 
 def spawn_worker():

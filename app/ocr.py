@@ -7,7 +7,11 @@ import time
 import numpy as np
 from rapidocr_onnxruntime import RapidOCR
 
-from app.chatapps import DEFAULT, ChatApp
+from app.chatapps import DEFAULT, ChatApp, side_by_geometry
+
+# 气泡右下角的时间/已读勾会被 OCR 并进正文（Telegram 实测「可以在这里测试 Jev 20:37」）。
+# 只剥「空格 + 时间」这种贴右缘的尾巴；正好以时间结尾的正文会被误伤，属已知取舍。
+_INLINE_TIME_RE = re.compile(r"\s\d{1,2}:\d{2}(?::\d{2})?\s*[✓✔wWvV/]*\s*$")
 
 _ENGINES: dict = {}   # backend name -> engine, shared per process
 _FELL_BACK = set()    # backends that failed once; don't retry every frame
@@ -127,8 +131,19 @@ class Reader:
                 # 字比正常气泡小得多 = 图片消息（截图/表情包）里的字，不是气泡
                 self.last_boxes.append(rect + ("image" if kind is None else "tiny", text))
                 continue
-            self.last_boxes.append(rect + (kind, text))
-            raw.append((kind, name if kind == "her" else None, text, box[0][1], box[2][1], h))
+            who = kind
+            if self.app.side == "geometry":
+                who = side_by_geometry(box[0][0], box[2][0], W)
+                if who is None:
+                    self.last_boxes.append(rect + ("gray", text))
+                    continue
+            if self.app.strip_time:
+                text = _INLINE_TIME_RE.sub("", text).rstrip()
+                if not text or re.fullmatch(r"\d{1,2}:\d{2}(:\d{2})?", text):
+                    self.last_boxes.append(rect + ("gray", text))
+                    continue
+            self.last_boxes.append(rect + (who, text))
+            raw.append((who, name if who == "her" else None, text, box[0][1], box[2][1], h))
         if not self.lh and len(raw) >= 3:
             self.lh = float(np.median([r[5] for r in raw]))
         # 同一气泡的多行合并：同人、上一行底到这一行顶的间距不到半个字高（不同气泡之间至少隔一个字高）
