@@ -35,49 +35,19 @@ u32, g32 = ctypes.windll.user32, ctypes.windll.gdi32
 
 
 def grab(hwnd):
-    """整窗截图：优先 Windows Graphics Capture（跟程序里用的一样，GPU 合成的窗口也拿得到），
-    没装 windows-capture 就退回屏幕 BitBlt（要求窗口在屏幕上、没有被盖住）。"""
-    try:
-        from app.capture import Capture
+    """整窗截图：直接走程序里的 Capture（默认 WGC，起不来自己退回 BitBlt），跟线上路径完全一致。"""
+    from app.capture import Capture
 
-        cap = Capture(hwnd, chatapps.TELEGRAM)
-        full = None
-        t0 = time.time()
-        while time.time() - t0 < 5 and full is None:
-            time.sleep(0.15)
-            full = cap.settled()
-        cap.stop()
-        if full is not None:
-            print("frame: WGC")
-            return full
-        print("frame: WGC 没在 5 秒内给帧，退回 BitBlt")
-    except Exception as e:
-        print(f"frame: WGC 不可用（{type(e).__name__}: {e}），退回 BitBlt")
-
-    rect = w.RECT()
-    u32.GetWindowRect(hwnd, ctypes.byref(rect))
-    W, H = rect.right - rect.left, rect.bottom - rect.top
-    hdc = u32.GetWindowDC(hwnd)
-    mem = g32.CreateCompatibleDC(hdc)
-    bmp = g32.CreateCompatibleBitmap(hdc, W, H)
-    old = g32.SelectObject(mem, bmp)
-    g32.BitBlt(mem, 0, 0, W, H, hdc, 0, 0, 0x00CC0020)
-
-    class BIH(ctypes.Structure):
-        _fields_ = [("biSize", w.DWORD), ("biWidth", w.LONG), ("biHeight", w.LONG), ("biPlanes", w.WORD),
-                    ("biBitCount", w.WORD), ("biCompression", w.DWORD), ("biSizeImage", w.DWORD),
-                    ("biXPelsPerMeter", w.LONG), ("biYPelsPerMeter", w.LONG), ("biClrUsed", w.DWORD),
-                    ("biClrImportant", w.DWORD)]
-
-    bi = BIH(ctypes.sizeof(BIH), W, -H, 1, 32, 0, 0, 0, 0, 0, 0)
-    buf = ctypes.create_string_buffer(W * H * 4)
-    g32.GetDIBits(mem, bmp, 0, H, buf, ctypes.byref(bi), 0)
-    g32.SelectObject(mem, old)
-    g32.DeleteObject(bmp)
-    g32.DeleteDC(mem)
-    u32.ReleaseDC(hwnd, hdc)
-    print("frame: BitBlt")
-    return np.frombuffer(buf, np.uint8).reshape(H, W, 4)[:, :, :3].copy()
+    cap = Capture(hwnd, chatapps.TELEGRAM)
+    print(f"frame 后端: {cap.backend}" + (f"（WGC 起不来：{str(cap.error)[:90]}）" if cap.error else ""))
+    full = None
+    t0 = time.time()
+    while time.time() - t0 < 8 and full is None:
+        time.sleep(0.15)
+        full = cap.settled()
+    cap.stop()
+    cap.wait()
+    return full
 
 
 def show_area(tag, area):

@@ -233,6 +233,11 @@ def _grab_bitblt(hwnd):
     rect = wintypes.RECT()
     if ctypes.windll.dwmapi.DwmGetWindowAttribute(hwnd, 9, ctypes.byref(rect), ctypes.sizeof(rect)) != 0:
         u32.GetWindowRect(hwnd, ctypes.byref(rect))
+    # 窗口矩形比 DWM 的可见边界大一圈（不可见的拉伸边框）。WGC 的帧是从可见边界开始的，
+    # 这里按同样的原点做 BitBlt，坐标才跟 fill() 里那个 DWM 矩形对得上。
+    outer = wintypes.RECT()
+    u32.GetWindowRect(hwnd, ctypes.byref(outer))
+    sx, sy = rect.left - outer.left, rect.top - outer.top
     W, H = rect.right - rect.left, rect.bottom - rect.top
     if W <= 0 or H <= 0:
         return None
@@ -240,7 +245,7 @@ def _grab_bitblt(hwnd):
     mem = g32.CreateCompatibleDC(hdc)
     bmp = g32.CreateCompatibleBitmap(hdc, W, H)
     old = g32.SelectObject(mem, bmp)
-    ok = g32.BitBlt(mem, 0, 0, W, H, hdc, 0, 0, 0x00CC0020)
+    ok = g32.BitBlt(mem, 0, 0, W, H, hdc, sx, sy, 0x00CC0020)
     buf = ctypes.create_string_buffer(W * H * 4)
     bi = BITMAPINFOHEADER(ctypes.sizeof(BITMAPINFOHEADER), W, -H, 1, 32, 0, 0, 0, 0, 0, 0)
     lines = g32.GetDIBits(mem, bmp, 0, H, buf, ctypes.byref(bi), 0)
