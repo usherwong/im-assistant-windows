@@ -20,30 +20,32 @@ u32.SetClipboardData.argtypes = [ctypes.c_uint, ctypes.c_void_p]
 
 
 def set_clipboard(text):
-    """写剪贴板。剪贴板可能被别的程序占着（剪贴板管理器、截图工具），重试几次。"""
+    """写剪贴板。剪贴板可能被别的程序占着（剪贴板管理器、截图工具、资源管理器复制文件），
+    原来只重试 10×50ms，碰上占得久一点的直接失败——现在拉长到 ~2 秒，还失败就报明确原因。"""
     data = text.encode("utf-16-le") + b"\0\0"
-    for attempt in range(10):
+    for attempt in range(20):
         if not u32.OpenClipboard(None):
-            time.sleep(0.05)
+            time.sleep(0.1)
             continue
         try:
             u32.EmptyClipboard()
             h = k32.GlobalAlloc(0x2, len(data))  # GMEM_MOVEABLE
             if not h:
-                raise RuntimeError("GlobalAlloc 失败")
+                raise RuntimeError("内存分配失败")
             p = k32.GlobalLock(h)
             if not p:
                 k32.GlobalFree(h)
-                raise RuntimeError("GlobalLock 失败")
+                raise RuntimeError("内存锁定失败")
             ctypes.memmove(p, data, len(data))
             k32.GlobalUnlock(h)
             if not u32.SetClipboardData(13, h):  # CF_UNICODETEXT；成功后句柄归系统，不能 Free
                 k32.GlobalFree(h)
-                raise RuntimeError(f"SetClipboardData 失败 (attempt {attempt})")
+                time.sleep(0.05)
+                continue
             return
         finally:
             u32.CloseClipboard()
-    raise RuntimeError("OpenClipboard 连续失败，剪贴板被其他程序占用")
+    raise RuntimeError("剪贴板被其他程序占用，稍等一下再点一次")
 
 
 def _log(message):
@@ -129,7 +131,7 @@ def fill(hwnd, area, text, app=None):
     old = w.POINT()
     u32.GetCursorPos(ctypes.byref(old))
     if not _click(cx, cy):  # 第一次点：激活窗口 + 把光标放进输入框
-        raise RuntimeError("光标移不到聊天窗口（本程序权限不足，请从桌面直接双击启动，不要由别的程序/脚本拉起）")
+        raise RuntimeError("光标移不过去（本程序权限低于聊天窗口，请从桌面直接启动；或鼠标被别的程序锁住）")
     if u32.GetForegroundWindow() != hwnd:
         # 后台进程发起的第一次点击，有时只被用来激活窗口，焦点没落到输入框——补一次
         time.sleep(0.25)

@@ -10,11 +10,12 @@ import ctypes
 import multiprocessing
 import queue
 import threading
+import time
 import traceback
 from collections import deque
 
 from app import settings, update, worker
-from app.capture import dpi_aware, find_chat_hwnd, window_rect
+from app.capture import dpi_aware, find_chat_hwnd, integrity_rid, window_rect
 from app.fill import fill
 from app.overlay import Overlay
 from app.version import VERSION
@@ -54,7 +55,12 @@ def fill_reply(text):
         target = target_of(ov.current_chat())  # 填进去的是界面上正看着的那个会话的对象
         if target:
             text = f"@{target} " + text  # 纯文本，微信不认成真正的 @，只是让群里看得出在跟谁说
-    fill(state["hwnd"], state["area"], text, state.get("app_obj"))
+    try:
+        fill(state["hwnd"], state["area"], text, state.get("app_obj"))
+    except RuntimeError:
+        # 剪贴板被占、焦点还没落稳这类都是瞬时问题：等半秒重试一次，还不行才把原因抛给界面
+        time.sleep(0.5)
+        fill(state["hwnd"], state["area"], text, state.get("app_obj"))
 
 
 def spawn_worker():
@@ -308,6 +314,10 @@ if __name__ == "__main__":  # Windows 的 spawn 会让子进程重新执行本�
         child = spawn_worker()
     if settings.debug_view():  # 上次开着就直接开回来
         set_debug(True)
+    if integrity_rid() and integrity_rid() < 0x2000:
+        # 被低权限父进程（沙箱、脚本、别的程序的文件链接）拉起来的：Windows 不允许它操作
+        # Telegram 这种 MEDIUM 窗口的鼠标键盘，「填入」必然失败——启动就说清楚，别等用户点了才发现
+        ov.set_status("本程序以受限权限启动，填入会被系统拦截；请从资源管理器双击启动", "warning")
     if not settings.has_jev_key():
         ov.set_status("请先在设置中配置模型", "warning")
         ov.after(0, ov.open_settings)

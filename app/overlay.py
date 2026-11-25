@@ -956,9 +956,10 @@ class Overlay:
         try:
             self.on_fill(self.cands[index])
         except Exception as e:
-            # 状态栏保持友好文案；真实原因和压缩堆栈进聊天记录，认得出是哪一步炸的
+            # 状态栏直接给原因（权限、剪贴板被占…），聊天记录里留类型和压缩堆栈
+            reason = " ".join(str(e).split())[:42]
             import traceback
-            self.set_status("未能填入，请确认聊天窗口可用后重试，或复制回复。", "error")
+            self.set_status(f"{T('未能填入')}：{reason}" if reason else T("未能填入，请复制回复。"), "error")
             self.log(f"[填入失败] {type(e).__name__}: {e}")
             self.log(f"[填入失败堆栈] {' '.join(traceback.format_exc().split())[:300]}")
             return

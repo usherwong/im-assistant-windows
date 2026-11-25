@@ -228,6 +228,35 @@ class BITMAPINFOHEADER(ctypes.Structure):
                 ("biClrUsed", wintypes.DWORD), ("biClrImportant", wintypes.DWORD)]
 
 
+def integrity_rid(pid: int = 0) -> int:
+    """进程令牌的完整性级别（0x1000 LOW / 0x2000 MEDIUM / 0x3000 HIGH），pid=0 表示本进程。
+    用来解释「填入」为什么会被系统静默拒绝：低完整性进程不能操作高完整性窗口的鼠标键盘。"""
+    k32, advapi = ctypes.windll.kernel32, ctypes.windll.advapi32
+    h = k32.OpenProcess(0x0400, False, pid or k32.GetCurrentProcessId())  # PROCESS_QUERY_INFORMATION
+    if not h:
+        return 0
+    tok = ctypes.c_void_p()
+    try:
+        if not advapi.OpenProcessToken(ctypes.c_void_p(h), 0x0008, ctypes.byref(tok)):  # TOKEN_QUERY
+            return 0
+        size = wintypes.DWORD(0)
+        advapi.GetTokenInformation(tok, 25, None, 0, ctypes.byref(size))  # TokenIntegrityLevel
+        buf = ctypes.create_string_buffer(size.value)
+        if not advapi.GetTokenInformation(tok, 25, buf, size, ctypes.byref(size)):
+            return 0
+        advapi.GetSidSubAuthorityCount.argtypes = [ctypes.c_void_p]
+        advapi.GetSidSubAuthorityCount.restype = ctypes.POINTER(ctypes.c_ubyte)
+        advapi.GetSidSubAuthority.argtypes = [ctypes.c_void_p, wintypes.DWORD]
+        advapi.GetSidSubAuthority.restype = ctypes.POINTER(wintypes.DWORD)
+        sid = ctypes.cast(buf, ctypes.POINTER(ctypes.c_void_p))[0]
+        n = advapi.GetSidSubAuthorityCount(sid)[0]
+        return int(advapi.GetSidSubAuthority(sid, n - 1)[0])
+    finally:
+        if tok:
+            k32.CloseHandle(tok)
+        k32.CloseHandle(h)
+
+
 def window_rect(hwnd):
     """窗口的可见矩形 (left, top, right, bottom)，物理像素、DWM 扩展边界——跟截图帧同一个原点，
     悬浮窗贴靠和 fill() 的落点都用它，三处坐标才是一套。"""
