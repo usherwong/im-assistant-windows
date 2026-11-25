@@ -35,10 +35,10 @@ def _engine(app: ChatApp = DEFAULT):
 
 
 def read_title(header, app: ChatApp = DEFAULT):
-    """面板头部那一条截图 → 会话名（numpy RGB）。取最靠上的一行，同一行里取最左的
-    （右边是图标按钮，传统上 OCR 不出字；但 Telegram 的窗口按钮就画在这一条里，「X」会比会话名还靠上，
-    所以先把贴在右边 15% 的框剔掉）。下面那行是公告/「last seen」。
-    群聊的成员数「(422)」去掉，只留名字当 key。
+    """面板头部那一条截图 → 会话名（numpy RGB）。
+    两步筛：先剔掉贴在右边 15% 的框（窗口按钮、搜索/通话按钮都在那儿，OCR 会把它们读成「X」「Q」），
+    再只留字号最大的那一行——会话名是头部里最大的一号字，图标框、"bot"、"last seen recently" 都明显更小。
+    剩下多行时取最靠上、同一行里最左的。群聊的成员数「(422)」去掉，只留名字当 key。
     认不出返回 ""。一次约 60ms，所以调用方只在头部像素变了时才问。"""
     res, _ = _engine(app)(header, use_cls=False)
     if not res:
@@ -47,6 +47,9 @@ def read_title(header, app: ChatApp = DEFAULT):
     res = [r for r in res if min(p[0] for p in r[0]) < 0.85 * width]
     if not res:
         return ""
+    height = lambda box: max(p[1] for p in box) - min(p[1] for p in box)  # noqa: E731
+    tallest = max(height(r[0]) for r in res)
+    res = [r for r in res if height(r[0]) >= 0.75 * tallest]
     first = min(res, key=lambda r: r[0][0][1])
     row = first[0][0][1] + (first[0][2][1] - first[0][0][1])  # 框底：顶在这之上的算同一行
     text = min((r for r in res if r[0][0][1] < row), key=lambda r: r[0][0][0])[1]
@@ -138,18 +141,39 @@ class Reader:
                 self.last_boxes.append(rect + ("image" if kind is None else "tiny", text))
                 continue
             self.last_boxes.append(rect + (kind, text))
-            raw.append((kind, name if kind == "her" else None, shaped, box[0][1], box[2][1], h))
+            raw.append((kind, name if kind == "her" else None, shaped, box[0][1], box[2][1], h,
+                        min(xs), max(xs), bg))
         if not self.lh and len(raw) >= 3:
             self.lh = float(np.median([r[5] for r in raw]))
-        # 同一气泡的多行合并：同人、上一行底到这一行顶的间距不到半个字高（不同气泡之间至少隔一个字高）
+        # 同一气泡的多行合并：同人，且（字挤得够近 或 两行之间那片像素还是同一个气泡的底色）。
+        # 后一条是给 Telegram 这种「一张大卡片里好几段话」的：段间距和两个气泡的间距差不多，
+        # 只看间距会把一条长消息切成几条，界面上就只剩最后一段。
         lines = []
-        for who, nm, text, top, bottom, h in raw:
-            if lines and lines[-1][0] == who and lines[-1][1] == nm and top - lines[-1][4] < 0.6 * (self.lh or h):
-                lines[-1][2] += self.app.join + text
-                lines[-1][4] = bottom
-            else:
-                lines.append([who, nm, text, top, bottom])
-        return [(w, n, t, y) for w, n, t, y, _ in lines]
+        for who, nm, text, top, bottom, h, left, right, bbg in raw:
+            if lines:
+                prev = lines[-1]
+                close = top - prev[4] < 0.6 * (self.lh or h)
+                if prev[0] == who and prev[1] == nm and (
+                        close or self._same_bubble(chat, prev, top, left, right)):
+                    prev[2] += self.app.join + text
+                    prev[4] = bottom
+                    continue
+            lines.append([who, nm, text, top, bottom, left, right, bbg])
+        return [(w, n, t, y) for w, n, t, y, *_ in lines]
+
+    @staticmethod
+    def _same_bubble(chat, prev, top, left, right):
+        """上一行底到这一行顶之间，有没有一整行不是气泡底色？
+        同一气泡里的两段话：间隙全是气泡底色（白/浅绿），一行「别的东西」都没有；
+        两个气泡之间：一定夹着一条面板/壁纸色的横带（宽度就几像素），按行看一目了然——比看占比稳，
+        因为两个气泡贴得近时气泡底色的占比能到九成。"""
+        y0, y1 = int(prev[4]) + 1, int(top)
+        x0, x1 = int(max(prev[5], left)), int(min(prev[6], right))
+        if y1 - y0 < 2 or x1 - x0 < 4:
+            return False
+        gap = chat[y0:y1, x0:x1].astype(int)
+        other = (np.abs(gap - prev[7]).sum(axis=2) > 30).mean(axis=1)
+        return not bool((other > 0.5).any())
 
     def new_lines(self, lines):
         """去重（滚动不重复）→ 这一帧里真正新出现的 [(who, name, text)]。
