@@ -145,6 +145,8 @@ def start_analyze(title, msgs):
         return
     state["busy"] = True
     ov.set_busy(True)
+    # 立刻给个反馈：截图 OCR（~1.6s）+ 判断/起草（几秒）这段时间里，状态栏不能还挂着上一条「你已回复」
+    ov.set_status("收到新消息，正在生成建议…", "busy")
     reply_to = target_of(title) if settings.reply_target() else None  # 开关关着就是今天的行为
     threading.Thread(target=analyze_bg, args=(msgs, title, chat_of(title)["rev"], reply_to),
                      daemon=True).start()
