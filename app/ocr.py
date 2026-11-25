@@ -36,9 +36,15 @@ def _engine(app: ChatApp = DEFAULT):
 
 def read_title(header, app: ChatApp = DEFAULT):
     """面板头部那一条截图 → 会话名（numpy RGB）。取最靠上的一行，同一行里取最左的
-    （右边是图标按钮，OCR 不出字；下面那行是公告）。群聊的成员数「(422)」去掉，只留名字当 key。
+    （右边是图标按钮，传统上 OCR 不出字；但 Telegram 的窗口按钮就画在这一条里，「X」会比会话名还靠上，
+    所以先把贴在右边 15% 的框剔掉）。下面那行是公告/「last seen」。
+    群聊的成员数「(422)」去掉，只留名字当 key。
     认不出返回 ""。一次约 60ms，所以调用方只在头部像素变了时才问。"""
     res, _ = _engine(app)(header, use_cls=False)
+    if not res:
+        return ""
+    width = header.shape[1]
+    res = [r for r in res if min(p[0] for p in r[0]) < 0.85 * width]
     if not res:
         return ""
     first = min(res, key=lambda r: r[0][0][1])

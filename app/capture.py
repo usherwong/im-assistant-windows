@@ -226,6 +226,15 @@ class BITMAPINFOHEADER(ctypes.Structure):
                 ("biClrUsed", wintypes.DWORD), ("biClrImportant", wintypes.DWORD)]
 
 
+def window_rect(hwnd):
+    """窗口的可见矩形 (left, top, right, bottom)，物理像素、DWM 扩展边界——跟截图帧同一个原点，
+    悬浮窗贴靠和 fill() 的落点都用它，三处坐标才是一套。"""
+    r = wintypes.RECT()
+    if ctypes.windll.dwmapi.DwmGetWindowAttribute(hwnd, 9, ctypes.byref(r), ctypes.sizeof(r)) != 0:
+        u32.GetWindowRect(hwnd, ctypes.byref(r))
+    return r.left, r.top, r.right, r.bottom
+
+
 def _grab_bitblt(hwnd):
     """GetWindowDC + BitBlt 抓整窗。WGC 不可用时的兜底（虚拟机、部分 RDP 会话、老系统上
     windows-capture 会直接抛 Failed to convert item to GraphicsCaptureItem）。要求窗口在屏幕上、没被别的

@@ -14,7 +14,7 @@ import traceback
 from collections import deque
 
 from app import settings, update, worker
-from app.capture import dpi_aware, find_chat_hwnd
+from app.capture import dpi_aware, find_chat_hwnd, window_rect
 from app.fill import fill
 from app.overlay import Overlay
 from app.version import VERSION
@@ -235,8 +235,25 @@ def drain():
             ov.set_status("你已回复，等待对方的新消息")
 
 
+def dock():
+    """面板贴着聊天窗口：窗口挪了/改了大小才重新贴一次，没变就什么都不做（每轮 tick 都会问）。
+    认不出窗口就保持原位，不硬摆。"""
+    global docked
+    hwnd = state["hwnd"]
+    if hwnd is None:
+        return
+    try:
+        rect = window_rect(hwnd)
+    except Exception:
+        return
+    if rect != docked:
+        docked = rect
+        ov.dock_to(rect)
+
+
 def tick():
     try:
+        dock()
         drain()
         while not update_result.empty():
             latest, url = update_result.get()
@@ -273,6 +290,7 @@ if __name__ == "__main__":  # Windows 的 spawn 会让子进程重新执行本�
     capture_on = multiprocessing.Event()  # 父子进程共用的开关，置位=采集
     debug_on = multiprocessing.Event()  # 同上，置位=子进程往队列里送整帧给调试窗
     child = dbg = None
+    docked = None  # 上次贴靠用的窗口矩形；窗口没动就不用重新贴
     ov = Overlay(on_fill=fill_reply, on_toggle_capture=on_toggle_capture,
                  on_target_change=on_target_change, on_toggle_debug=set_debug,
                  on_language_changed=on_language_changed,
@@ -283,6 +301,7 @@ if __name__ == "__main__":  # Windows 的 spawn 会让子进程重新执行本�
     except RuntimeError:
         ov.set_capture(False, "未找到聊天窗口，打开后再开启采集")
     else:
+        dock()  # 先贴到聊天窗口旁边再开采集，别让面板先闪到屏幕右上角再跳过来
         capture_on.set()
         child = spawn_worker()
     if settings.debug_view():  # 上次开着就直接开回来

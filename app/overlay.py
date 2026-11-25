@@ -7,7 +7,7 @@ from datetime import datetime
 from math import isfinite
 from types import SimpleNamespace
 
-from PySide6.QtCore import QObject, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QObject, QPoint, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QFrame, QHBoxLayout, QLabel, QPushButton, QSizeGrip, QSizePolicy,
@@ -333,6 +333,23 @@ class Overlay:
         self.set_status("等待新消息" if settings.has_key() else "需要配置模型",
                         "idle" if settings.has_key() else "warning")
         self.win.show()
+
+    def dock_to(self, rect):
+        """把面板贴到聊天窗口右侧：优先右边，屏幕放不下换左边，再不行贴屏幕右缘；竖直方向跟窗口顶部对齐。
+        rect 是聊天窗口的物理像素矩形（capture.window_rect），Qt 这边是逻辑像素，200% 缩放下要折半。"""
+        dpr = self.win.devicePixelRatioF() or 1.0
+        left, top, right = (v / dpr for v in rect[:3])
+        screen = (self.app.screenAt(QPoint(int((left + right) / 2), int(top) + 40))
+                  or self.app.primaryScreen())
+        avail = screen.availableGeometry()
+        gap, w, h = 12, self.win.width(), self.win.height()
+        x = right + gap                                    # 先试右边
+        if x + w > avail.right():
+            x = left - gap - w                             # 右边放不下 → 左边
+        x = max(avail.left() + gap, min(x, avail.right() - w - gap))
+        y = max(avail.top() + 8, min(int(top), avail.bottom() - h - 8))
+        if abs(self.win.x() - int(x)) > 2 or abs(self.win.y() - int(y)) > 2:
+            self.win.move(int(x), int(y))
 
     def _scroll_page(self):
         scroll = ScrollArea()
