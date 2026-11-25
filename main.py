@@ -26,7 +26,8 @@ from app.i18n import T
 # 只是缓冲区，实际喂模型几条由设置里的「参考上下文」决定
 # senders：这个群里发过言的人，去重、最近的排最前；target：用户挑的回复对象（None = 跟着最近那个走）
 chats = {}
-state = {"area": None, "busy": False, "rerun": None, "hwnd": None, "chat": ""}
+# app / app_obj：当前聊天软件的 key 和 ChatApp（子进程按 key 走，填入框的落点按对象走）
+state = {"area": None, "busy": False, "rerun": None, "hwnd": None, "chat": "", "app": None, "app_obj": None}
 results = queue.Queue()
 update_result = queue.Queue()  # 独立小队列，别跟 results 的 (kind, r, title, revision) 形状搅在一起
 
@@ -53,7 +54,7 @@ def fill_reply(text):
         target = target_of(ov.current_chat())  # 填进去的是界面上正看着的那个会话的对象
         if target:
             text = f"@{target} " + text  # 纯文本，微信不认成真正的 @，只是让群里看得出在跟谁说
-    fill(state["hwnd"], state["area"], text)
+    fill(state["hwnd"], state["area"], text, state.get("app_obj"))
 
 
 def spawn_worker():
@@ -103,7 +104,7 @@ def on_toggle_capture(on):
     if child is None:
         try:
             state["hwnd"], found = find_chat_hwnd()
-            state["app"] = found.key
+            state["app"], state["app_obj"] = found.key, found
         except RuntimeError:
             ov.set_capture(False, "未找到聊天窗口，打开后再开启采集")
             return
@@ -278,7 +279,7 @@ if __name__ == "__main__":  # Windows 的 spawn 会让子进程重新执行本�
                  result_of=lambda t: chats.get(t, {}).get("result"))
     try:
         state["hwnd"], found = find_chat_hwnd()
-        state["app"] = found.key
+        state["app"], state["app_obj"] = found.key, found
     except RuntimeError:
         ov.set_capture(False, "未找到聊天窗口，打开后再开启采集")
     else:

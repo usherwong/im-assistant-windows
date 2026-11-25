@@ -82,11 +82,16 @@ DeepSeek 官方 API（`api.deepseek.com`）国内直连，起草基本就是一�
 |---|---|---|---|
 | 微信 | RapidOCR（中英文模型） | 绿色 | 标题为「微信」的主窗口 |
 | KakaoTalk（韩国） | Windows.Media.Ocr（系统语言包，离线） | `#FEE500` | 一个对话一个窗口，主列表窗除外 |
+| Telegram | RapidOCR（中英文模型） | 右对齐（浅色 `#EEFFDE`、夜间 `#2B5278`） | 列表和对话在同一个窗口，标题「Telegram」 |
 
 RapidOCR 自带的只有中英文模型，韩文整段都是乱码：同一个 KakaoTalk 窗口实测 8 条气泡 0 条认对，
 一帧 2.0s，而且全被判成对方发的（气泡颜色规则只认微信绿）。韩文界面改走 Windows 自带 OCR 之后
 9 条全认对、自己/对方分得清，一帧 0.20s。做法和实测见 [docs/KOREAN.md](docs/KOREAN.md)；
 新增一个软件只要在 `app/chatapps.py` 里加一行。
+
+Telegram 那一条不止一行代码：它的对话底是一张壁纸而不是纯色，消息区边界得按「纯色列 / 花列」重找，
+己方气泡也得靠右对齐兜底。做法、调参方法和已知限制见 [docs/TELEGRAM.md](docs/TELEGRAM.md)；
+量真实窗口用 `python -m probe.probe_telegram`（只读，不点击、不发送）。
 
 ## 截图
 
