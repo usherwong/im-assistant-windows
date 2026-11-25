@@ -232,7 +232,14 @@ def integrity_rid(pid: int = 0) -> int:
     """进程令牌的完整性级别（0x1000 LOW / 0x2000 MEDIUM / 0x3000 HIGH），pid=0 表示本进程。
     用来解释「填入」为什么会被系统静默拒绝：低完整性进程不能操作高完整性窗口的鼠标键盘。"""
     k32, advapi = ctypes.windll.kernel32, ctypes.windll.advapi32
-    h = k32.OpenProcess(0x0400, False, pid or k32.GetCurrentProcessId())  # PROCESS_QUERY_INFORMATION
+    # 句柄/指针必须显式声明：64 位下默认 restype 是 32 位 int，句柄被截断后 OpenProcessToken
+    # 必然失败（打包后的进程句柄更大，源码跑却可能凑巧正常，所以这里一次钉死）
+    k32.OpenProcess.restype = ctypes.c_void_p
+    k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    k32.GetCurrentProcessId.restype = wintypes.DWORD
+    advapi.OpenProcessToken.restype = wintypes.BOOL
+    advapi.OpenProcessToken.argtypes = [ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p)]
+    h = k32.OpenProcess(wintypes.DWORD(0x0400), False, pid or k32.GetCurrentProcessId())
     if not h:
         return 0
     tok = ctypes.c_void_p()
