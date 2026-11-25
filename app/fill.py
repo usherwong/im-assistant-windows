@@ -58,7 +58,9 @@ def fill(hwnd, area, text, app=None):
         u32.GetWindowRect(hwnd, ctypes.byref(r))
     x0, _, x1, y1 = area
     want = app.input_dx if app is not None else 60
-    dx = max(120, min(want, (x1 - x0) // 3))
+    # 只收紧、不放大：窄面板上把落点收回面板宽度的三分之一，免得贴到附件/发送按钮上；
+    # 微信的 60 本来就在文字的左边，宽面板上算出更大的值时也还是 60（不改它的老行为）
+    dx = min(want, max(60, (x1 - x0) // 3))
     dy = app.input_dy if app is not None else 40
     cx, cy = r.left + x0 + dx, r.top + y1 + dy  # 分隔线下 dy = 输入框文字区；工具栏和「发送」在输入区最底下，碰不到
     unminimize(hwnd)
