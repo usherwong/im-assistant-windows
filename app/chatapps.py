@@ -12,6 +12,7 @@ Telegram Desktop（v5+，Qt6）跟微信/KakaoTalk 有三处不一样，都在�
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Callable
 
@@ -31,19 +32,34 @@ def _kakao_me(bg: np.ndarray, box=None, width: int = 0) -> bool:
 
 def _telegram_me(bg: np.ndarray, box=None, width: int = 0) -> bool:
     """Telegram Desktop: own messages sit on the right, and the own bubble colour depends on the theme.
-    Light themes use #EEFFDE (greenish white), the night theme #2B5278 (blue); the other side is
-    #FFFFFF / #182533, which neither test below accepts (white has no hue, #182533 is too dark).
-    Theme packs the user installs can repaint both bubbles, so when the colour says nothing the
-    bubble's right edge decides: own bubbles end near the pane's right padding, the other side's
-    never do (they are left-aligned and capped well short of it)."""
+    Light themes paint it #EEFFDE / #DEFDEF (greenish white: green clearly above red and blue, but the
+    gap to blue is small — measured 222/253/239 on a live window), the night theme #2B5278 (blue).
+    The other side is #FFFFFF / #182533 and the wallpaper is darker than 200 in green, so the two
+    tests below keep all three apart. Theme packs the user installs can repaint both bubbles, so when
+    the colour says nothing the bubble's right edge decides."""
     r, g, b = int(bg[0]), int(bg[1]), int(bg[2])
-    if r > 190 and g > r + 10 and g > b + 20:          # #EEFFDE 一类的浅绿白
+    if g > 200 and g - r > 12 and g - b > 8:            # #EEFFDE / #DEFDEF 一类的浅绿白
         return True
-    if b > g + 18 and b > r + 30 and r + g + b > 150:  # #2B5278 一类的夜间蓝
+    if b > g + 18 and b > r + 30 and r + g + b > 150:   # #2B5278 一类的夜间蓝
         return True
     if box is None or not width:
         return False
-    return max(float(p[0]) for p in box) > 0.82 * width
+    return max(float(p[0]) for p in box) > 0.75 * width
+
+
+_TIME_ONLY = re.compile(r"^[\s\u200e\u200f]*\d{1,2}:\d{2}[\s✓✔]*$")
+_TIME_TAIL = re.compile(r"\s+\d{1,2}:\d{2}[\s✓✔]*$")
+
+
+def _telegram_clean(text: str) -> str:
+    """Telegram 把发送时间印在气泡里面（右下角、跟气泡同底色），OCR 会把它读成正文的一部分：
+    实测「好的」会变成「好的 23:40」、「…可以这样实现 23:40」。单独一个时间框也常见。
+    已读的双勾偶尔还会读出 ✓/✔。这里只削「空白 + 时间」这种真的尾巴——「我们23:40见」没有空格，不动。
+    返回空串 = 这一框没有正文，调用方丢掉。"""
+    t = text.replace("\u200e", "").replace("\u200f", "").strip()
+    if _TIME_ONLY.match(t):
+        return ""
+    return _TIME_TAIL.sub("", t).strip()
 
 
 def _kakao_notice_rows(chat: np.ndarray) -> int:
@@ -69,6 +85,7 @@ class ChatApp:
     join: str                    # how OCR fragments inside one bubble are glued
     is_me: Callable[..., bool]   # (bubble_bg, ocr_box, pane_width) -> is this bubble mine
     trim_top: Callable[[np.ndarray], int] = lambda chat: 0  # rows to skip (pinned notice, ...)
+    clean: Callable[[str], str] = lambda text: text  # 去掉气泡里印着的元信息（Telegram 的时间）
     # 同一进程还开着侧窗时（看图、通话、设置），只要面积不小于最大窗口这个比例的
     min_share: float = 0.0
     # "flat" = 面板底色是纯色（微信、KakaoTalk）；"patterned" = 面板底是壁纸（Telegram）
@@ -89,8 +106,8 @@ KAKAOTALK = ChatApp("kakaotalk", "카카오톡", ("kakaotalk.exe",), "", ("카�
 # 壁纸底 → area="patterned"；原文拼接用空格（英文/韩文换行处要留空格，中文多出来的空格无害）。
 TELEGRAM = ChatApp("telegram", "Telegram", ("telegram.exe",), "Telegram",
                    ("", "QTrayIconMessageWindow", "_q_titlebar"),
-                   "rapidocr", " ", _telegram_me, min_share=0.45, area="patterned",
-                   input_dx=90, input_dy=34)
+                   "rapidocr", " ", _telegram_me, clean=_telegram_clean, min_share=0.45,
+                   area="patterned", input_dx=90, input_dy=34)
 
 APPS = {a.key: a for a in (WECHAT, KAKAOTALK, TELEGRAM)}
 DEFAULT = WECHAT
@@ -113,12 +130,14 @@ if __name__ == "__main__":  # 自测：颜色规则用实测像素锁住，改�
     assert not KAKAOTALK.is_me(np.array(kakao_other))
     assert not KAKAOTALK.is_me(np.array(kakao_ground))
     assert WECHAT.is_me(np.array((149, 236, 105))) and not WECHAT.is_me(np.array(kakao_bubble))
-    # Telegram：浅色 #EEFFDE 是己方，对方白泡不是；夜间 #2B5278 是己方，#182533 不是
+    # Telegram：浅色 #EEFFDE / 实测 #DEFDEF 是己方，对方白泡不是；夜间 #2B5278 是己方，#182533 不是
     assert TELEGRAM.is_me(np.array((238, 255, 222)))
+    assert TELEGRAM.is_me(np.array((222, 253, 239)))
     assert not TELEGRAM.is_me(np.array((255, 255, 255)))
     assert TELEGRAM.is_me(np.array((43, 82, 120)))
     assert not TELEGRAM.is_me(np.array((24, 37, 51)))
-    # 认不出颜色时靠右对齐兜底：贴到 82% 以右算己方
+    assert not TELEGRAM.is_me(np.array((132, 184, 137)))  # 绿壁纸不是气泡
+    # 认不出颜色时靠右对齐兜底：贴到 75% 以右算己方
     assert TELEGRAM.is_me(np.array((200, 200, 200)), [(10, 10), (900, 10), (900, 30), (10, 30)], 1000)
     assert not TELEGRAM.is_me(np.array((200, 200, 200)), [(10, 10), (500, 10), (500, 30), (10, 30)], 1000)
     pane = np.full((400, 300, 3), kakao_ground, np.uint8)
@@ -129,4 +148,10 @@ if __name__ == "__main__":  # 自测：颜色规则用实测像素锁住，改�
     pane2[20:60, :150] = 255               # 반만 채운 흰색 = 그냥 기포
     assert KAKAOTALK.trim_top(pane2) == 0
     assert TELEGRAM.area == "patterned" and TELEGRAM.min_share > 0
+    # 气泡里的时间戳：整框时间丢掉，正文尾巴上的削掉，正文中间的同款不动
+    assert TELEGRAM.clean("好的 23:40") == "好的"
+    assert TELEGRAM.clean("23:40") == ""
+    assert TELEGRAM.clean("\u200e23:41 ✓✓") == ""
+    assert TELEGRAM.clean("我们23:40见") == "我们23:40见"
+    assert WECHAT.clean("好的 23:40") == "好的 23:40"  # 别的软件不动
     print("chatapps ok")

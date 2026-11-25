@@ -10,6 +10,26 @@ import numpy as np
 from app import chatapps
 
 u32 = ctypes.windll.user32
+g32 = ctypes.windll.gdi32  # BitBlt 兜底用（WGC 不可用时）
+
+
+def dpi_aware():
+    """让本进程按真实像素工作，必须在建任何窗口/截图之前调用。
+    只调 SetProcessDPIAware()（system aware）在 200% 缩放的屏幕上拿到的是减半的坐标和半分辨率截图
+    （Telegram 自己的日志就是 devicePixelRatio 2，实测 1626x1262 的窗口我们只看到 813x631），
+    小字 OCR 直接糊一半。per-monitor v2 拿到的才是 GDI/WGC 的真像素。先试新 API，再逐级退回。"""
+    u32 = ctypes.windll.user32
+    try:
+        if u32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4)):  # PER_MONITOR_AWARE_V2
+            return
+    except Exception:
+        pass
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)  # PROCESS_PER_MONITOR_DPI_AWARE
+        return
+    except Exception:
+        pass
+    u32.SetProcessDPIAware()
 
 
 def find_chat_hwnd(want=None):
@@ -131,39 +151,58 @@ def _chat_area_flat(full, header_h=60):
     return x0, y_top, x1, y_in, bg, y0
 
 
-def _chat_area_patterned(full):
-    """Telegram 的消息区底下是一张壁纸（默认带纹理的渐变），不是纯色，纯色那套「众数底色」认不出来。
-    换成靠「纯色 / 花」分界：
-    - 左右：聊天列表、工具条都是整列纯色（一列从上到下一个色），壁纸列一路都在变色（竖直渐变也算）；
-      第一根/最后一根「整列在变色」的列就是面板左右边——气泡有内边距，贴不到面板边上
-    - 上下：头部和输入条是整行纯色横条。先量最上面几行 / 最下面几行的中位色当参考，
-      往下/往上找第一行明显不是它的：消息区顶 / 输入条顶
-    - 消息区顶上那张铺满面板宽的纯色卡片（Telegram 的置顶消息条）不是消息，跳过
-    壁纸被用户设成纯色时这里会认不出来，返回 None，调用方退回纯色那套。"""
+def _longest_run(flags, min_len):
+    """最长的一段连续 True，返回 (start, end)；都不够长就 (None, None)。"""
+    best = (None, None)
+    start = None
+    for i, f in enumerate(flags):
+        if f and start is None:
+            start = i
+        elif not f and start is not None:
+            if i - start >= min_len and i - start > (best[1] or 0) - (best[0] or 0):
+                best = (start, i)
+            start = None
+    end = len(flags)
+    if start is not None and end - start >= min_len and end - start > (best[1] or 0) - (best[0] or 0):
+        best = (start, end)
+    return best
+
+
+def _row_share(row):
+    """一行里众数颜色占的比例：纯色横条 ≈ 1，壁纸（图案/照片）低得多。"""
+    vals, cnt = np.unique(row, axis=0, return_counts=True)
+    return float(cnt.max()) / max(1, len(row))
+
+
+def _chat_area_patterned(full, margin=6):
+    """Telegram 的消息区底下是一张壁纸（图案/照片/渐变），不是纯色，所以不能像微信那样找「众数底色」。
+    改成找「不是界面底色的那一大块」：
+    - 界面底色 = 整窗最常见的颜色——聊天列表、头部、输入条、标题区都是它
+    - 左右：壁纸列整列都不是界面底色（列表列只有头像/选中行/文字那几行不是），取最长的一段；
+      窗口边缘几像素可能混进桌面别的东西，margin 里不看
+    - 上下：面板范围内壁纸行占多数；头部、输入条是纯色整行，自然被排除
+    - 置顶消息条：面板顶上一条铺满宽度、几乎单色的横带，不是消息，跳掉
+    壁纸被设成纯色（或和界面底色一样）时这块会太窄 → 返回 None，调用方退回纯色那套。
+    实测（1626x1261，浅色主题 + 默认绿壁纸）：x 585..1620、y 155..1157，跟眼睛看的边界一致。"""
     H, W = full.shape[:2]
-    img = full.astype(np.int16)
-    col_std = img.std(axis=(0, 2))
-    noisy = col_std > 3.0
-    if noisy.mean() < 0.03:  # 全是纯色列 = 壁纸是纯色，交给 flat 那套
+    if W < 400 or H < 240:
         return None
-    x0 = int(np.argmax(noisy))
-    x1 = W - int(np.argmax(noisy[::-1]))
-    if x1 - x0 < 120:
+    chrome = _mode_color(full)
+    mask = np.abs(full.astype(np.int16) - chrome).sum(axis=2) > 26
+    col = mask[H // 4: H * 3 // 4].mean(axis=0)
+    col[:margin] = False
+    col[W - margin:] = False
+    x0, x1 = _longest_run(col > 0.5, max(120, W // 6))
+    if x0 is None or x1 - x0 < max(150, W // 6):
         return None
-    pane = img[:, x0 + 6:x1 - 6]
-    head = np.median(pane[2:min(20, H)], axis=(0, 1))
-    tail = np.median(pane[max(0, H - 20):H - 2], axis=(0, 1))
-    row_head = np.abs(pane - head).sum(axis=2).mean(axis=1)
-    row_tail = np.abs(pane - tail).sum(axis=2).mean(axis=1)
-    top = np.flatnonzero(row_head > 24)
-    bottom = np.flatnonzero(row_tail > 24)
-    if top.size == 0 or bottom.size == 0:
+    row = mask[:, x0:x1].mean(axis=1)
+    row = np.convolve(row, np.ones(5) / 5, mode="same")  # 白泡把一两行压下去时不至于断掉
+    y0, y1 = _longest_run(row > 0.3, max(80, H // 8))
+    if y0 is None or y1 - y0 < max(80, H // 8):
         return None
-    y0, y1 = int(top[0]), int(bottom[-1]) + 1
-    flat_row = pane.std(axis=2).mean(axis=1) < 6  # 行内几乎没有颜色起伏 = 纯色横条
-    while y0 < H - 1 and flat_row[y0]:  # 置顶消息条：纯色、铺满宽度，不是消息
+    while y0 < y1 - 80 and _row_share(full[y0, x0:x1]) > 0.9:  # 置顶消息条：整行一个颜色
         y0 += 1
-    if y1 - y0 < 60:
+    if y1 - y0 < 80:
         return None
     # 面板底色取壁纸的左内边（气泡有内边距，这一条一定是壁纸）：worker 拿它判「字是不是印在面板上」，
     # 取消息区众数会把大白泡算成面板色，短句就被当成发言人名了
@@ -179,28 +218,72 @@ def chat_area(full, app=None, header_h=60):
     return _chat_area_flat(full, header_h)
 
 
+class BITMAPINFOHEADER(ctypes.Structure):
+    _fields_ = [("biSize", wintypes.DWORD), ("biWidth", wintypes.LONG), ("biHeight", wintypes.LONG),
+                ("biPlanes", wintypes.WORD), ("biBitCount", wintypes.WORD),
+                ("biCompression", wintypes.DWORD), ("biSizeImage", wintypes.DWORD),
+                ("biXPelsPerMeter", wintypes.LONG), ("biYPelsPerMeter", wintypes.LONG),
+                ("biClrUsed", wintypes.DWORD), ("biClrImportant", wintypes.DWORD)]
+
+
+def _grab_bitblt(hwnd):
+    """GetWindowDC + BitBlt 抓整窗。WGC 不可用时的兜底（虚拟机、部分 RDP 会话、老系统上
+    windows-capture 会直接抛 Failed to convert item to GraphicsCaptureItem）。要求窗口在屏幕上、没被别的
+    窗口完全盖住——WGC 能抓到被盖住的窗口，这条路抓不到，所以只是兜底，不改默认路径。"""
+    rect = wintypes.RECT()
+    if ctypes.windll.dwmapi.DwmGetWindowAttribute(hwnd, 9, ctypes.byref(rect), ctypes.sizeof(rect)) != 0:
+        u32.GetWindowRect(hwnd, ctypes.byref(rect))
+    W, H = rect.right - rect.left, rect.bottom - rect.top
+    if W <= 0 or H <= 0:
+        return None
+    hdc = u32.GetWindowDC(hwnd)
+    mem = g32.CreateCompatibleDC(hdc)
+    bmp = g32.CreateCompatibleBitmap(hdc, W, H)
+    old = g32.SelectObject(mem, bmp)
+    ok = g32.BitBlt(mem, 0, 0, W, H, hdc, 0, 0, 0x00CC0020)
+    buf = ctypes.create_string_buffer(W * H * 4)
+    bi = BITMAPINFOHEADER(ctypes.sizeof(BITMAPINFOHEADER), W, -H, 1, 32, 0, 0, 0, 0, 0, 0)
+    lines = g32.GetDIBits(mem, bmp, 0, H, buf, ctypes.byref(bi), 0)
+    g32.SelectObject(mem, old)
+    g32.DeleteObject(bmp)
+    g32.DeleteDC(mem)
+    u32.ReleaseDC(hwnd, hdc)
+    if not ok or not lines:
+        return None
+    return np.frombuffer(buf, np.uint8).reshape(H, W, 4)[:, :, :3].copy()
+
+
 class Capture:
-    """WGC 盯窗口。采集线程只做「跟上一帧比」；settled() 在画面停稳后交出整帧，中间帧（滚动动画、
-    新消息滑入的半截气泡）全跳过。动图表情永远停不稳，所以最多等 max_wait 秒照样交。"""
+    """盯窗口截图。默认 WGC：采集线程只做「跟上一帧比」，settled() 在画面停稳后交出整帧，中间帧
+    （滚动动画、新消息滑入的半截气泡）全跳过；动图表情永远停不稳，所以最多等 max_wait 秒照样交。
+    WGC 起不来的机器（虚拟机 / 部分 RDP / 老系统）自动退回 BitBlt 轮询，接口一模一样。"""
 
     def __init__(self, hwnd, app=None, settle=0.25, max_wait=1.0):
-        from windows_capture import WindowsCapture
-
         self.app = app  # 消息区找法按聊天软件走（Telegram 是壁纸底，见 chat_area）
         self.settle, self.max_wait = settle, max_wait
         self.shape = self.area = self.last = self.pending = None
         self.t = self.t0 = 0.0
-        # 包装层默认 cursor_capture=True，会去调 SetIsCursorCaptureEnabled。
-        # 这个属性要 Win10 2004（build 19041）才有，1909 及更早直接抛 CursorConfigUnsupported。
-        # 显式 None 走系统默认，不去切换；draw_border 同理。
-        cap = WindowsCapture(cursor_capture=None, draw_border=None, window_hwnd=hwnd)
-        cap.event(self.on_frame_arrived)
-        cap.event(self.on_closed)
-        self.ctl = cap.start_free_threaded()
+        self.hwnd, self.ctl, self.backend, self.error = hwnd, None, "wgc", None
+        try:
+            from windows_capture import WindowsCapture
+
+            # 包装层默认 cursor_capture=True，会去调 SetIsCursorCaptureEnabled。
+            # 这个属性要 Win10 2004（build 19041）才有，1909 及更早直接抛 CursorConfigUnsupported。
+            # 显式 None 走系统默认，不去切换；draw_border 同理。
+            cap = WindowsCapture(cursor_capture=None, draw_border=None, window_hwnd=hwnd)
+            cap.event(self.on_frame_arrived)
+            cap.event(self.on_closed)
+            self.ctl = cap.start_free_threaded()
+        except Exception as e:  # 不是所有机器都给 WGC：退回 BitBlt 轮询
+            self.backend, self.error = "bitblt", e
+            self._last_grab = 0.0
 
     def on_frame_arrived(self, frame, control):
         full = np.ascontiguousarray(frame.frame_buffer[:, :, :3][:, :, ::-1])  # BGRA → RGB；缓冲区回调后就没了，必须拷
-        if full.max() == 0:
+        self._feed(full)
+
+    def _feed(self, full):
+        if full is None or full.max() == 0:
             return
         if self.area is None or full.shape != self.shape:
             self.shape, self.area = full.shape, chat_area(full, self.app)
@@ -221,6 +304,11 @@ class Capture:
 
     def settled(self):
         """停稳了就返回整帧，否则 None。"""
+        if self.backend == "bitblt":
+            now = time.perf_counter()
+            if now - self._last_grab >= 0.05:  # 轮询抓帧：20fps 够用，也不至于把 CPU 吃满
+                self._last_grab = now
+                self._feed(_grab_bitblt(self.hwnd))
         if self.pending is None:
             return None
         now = time.perf_counter()
@@ -230,10 +318,14 @@ class Capture:
         return full
 
     def alive(self):
+        if self.backend == "bitblt":
+            return bool(u32.IsWindow(self.hwnd))
         return not self.ctl.is_finished()
 
     def stop(self):
-        self.ctl.stop()
+        if self.ctl is not None:
+            self.ctl.stop()
 
     def wait(self):
-        self.ctl.wait()  # 采集线程若是报错死的，这里把错误抛出来
+        if self.ctl is not None:
+            self.ctl.wait()  # 采集线程若是报错死的，这里把错误抛出来

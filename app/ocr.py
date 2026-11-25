@@ -113,14 +113,18 @@ class Reader:
             kind, bg, h = who_said(chat, box, self.app)
             xs, ys = [p[0] for p in box], [p[1] for p in box]
             rect = (int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys)))
+            shaped = self.app.clean(text)  # 气泡里印着的元信息（Telegram 的发送时间）
+            if not shaped:  # 只剩时间/勾，本来就不是消息
+                self.last_boxes.append(rect + ("time", text))
+                continue
             # 印在面板底色上的字都不是消息：气泡自带底色。微信的发言人名是灰字，
             # KakaoTalk 的是深色（对比度跟正文一样），所以不能只看 kind == "gray"。
             on_pane = np.abs(bg - pane_bg).sum() <= 6
             if kind == "gray" or (on_pane and kind == "her"):
-                taken = bool(on_pane and box[0][0] < 0.25 * W and len(text) <= 16
-                             and not re.search("[:：]", text))
+                taken = bool(on_pane and box[0][0] < 0.25 * W and len(shaped) <= 16
+                             and not re.search("[:：]", shaped))
                 if taken:
-                    name = text
+                    name = shaped
                 self.last_boxes.append(rect + ("name" if taken else "gray", text))
                 continue
             if kind is None or (self.lh and h < 0.6 * self.lh):
@@ -128,7 +132,7 @@ class Reader:
                 self.last_boxes.append(rect + ("image" if kind is None else "tiny", text))
                 continue
             self.last_boxes.append(rect + (kind, text))
-            raw.append((kind, name if kind == "her" else None, text, box[0][1], box[2][1], h))
+            raw.append((kind, name if kind == "her" else None, shaped, box[0][1], box[2][1], h))
         if not self.lh and len(raw) >= 3:
             self.lh = float(np.median([r[5] for r in raw]))
         # 同一气泡的多行合并：同人、上一行底到这一行顶的间距不到半个字高（不同气泡之间至少隔一个字高）

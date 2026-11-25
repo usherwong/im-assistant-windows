@@ -29,7 +29,7 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="repla
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app import chatapps  # noqa: E402
-from app.capture import _chat_area_flat, _chat_area_patterned, chat_area, find_chat_hwnd  # noqa: E402
+from app.capture import _chat_area_flat, _chat_area_patterned, chat_area, dpi_aware, find_chat_hwnd  # noqa: E402
 
 u32, g32 = ctypes.windll.user32, ctypes.windll.gdi32
 
@@ -105,6 +105,7 @@ def main():
     ap.add_argument("--save", help="把抓到的这一帧存成 PNG（默认只在内存里看）")
     ap.add_argument("--seconds", type=float, default=0, help="连抓多少秒，画面变了就重打")
     args = ap.parse_args()
+    dpi_aware()  # 跟程序一样先声明 per-monitor DPI，否则在 200% 屏上量到的是半分辨率
 
     hwnd, app = find_chat_hwnd(chatapps.TELEGRAM)
     title = ctypes.create_unicode_buffer(256)
@@ -143,7 +144,7 @@ def main():
         lines = r.read(chat, bg)
         print(f"ocr       : {r.last_ms} ms, {len(lines)} lines")
         for who, nm, text, y in lines:
-            print(f"  {who:3s} y={y:4d} {('[%s] ' % nm) if nm else ''}{text!r}")
+            print(f"  {who:3s} y={float(y):7.1f} {('[%s] ' % nm) if nm else ''}{text!r}")
         print("boxes     :")
         for x0b, y0b, x1b, y1b, kind, text in r.last_boxes:
             print(f"  {kind:5s} ({x0b:4d},{y0b:4d})-({x1b:4d},{y1b:4d}) {text!r}")

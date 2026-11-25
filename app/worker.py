@@ -9,7 +9,7 @@ import traceback
 import numpy as np
 
 from app import chatapps
-from app.capture import Capture, chat_area, unminimize
+from app.capture import Capture, chat_area, dpi_aware, unminimize
 from app.ocr import Reader, read_title, similar
 
 
@@ -35,7 +35,7 @@ def run(q, hwnd, enabled, debug_on, app_key=None):
     """enabled 置位=采集，清掉=暂停。暂停时停掉 WGC 会话（Windows 那圈黄色采集边框也跟着没了），
     恢复时重开一个；readers 一直留着，去重状态不丢，恢复后不会把屏幕上的旧消息再报一遍。
     debug_on 置位才往队列里送整帧（一帧 2~3MB），关着一点额外活都不干。"""
-    ctypes.windll.user32.SetProcessDPIAware()
+    dpi_aware()  # 子进程也要：真像素才截得全，坐标才跟父进程的窗口矩形对得上
     app = chatapps.get(app_key)
     cap = None
     readers = {}  # {会话名: Reader}，一个会话一套去重状态
