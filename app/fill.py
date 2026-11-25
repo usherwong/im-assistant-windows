@@ -46,6 +46,62 @@ def set_clipboard(text):
     raise RuntimeError("OpenClipboard 连续失败，剪贴板被其他程序占用")
 
 
+def _log(message):
+    """现场排查用：设了 JEV_FILL_LOG=<文件路径> 才写，平时一个字都不落盘（聊天内容不进日志）。"""
+    import os
+
+    path = os.environ.get("JEV_FILL_LOG")
+    if not path:
+        return
+    try:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(message + "\n")
+    except OSError:
+        pass
+
+
+def _click(x, y):
+    """把光标移过去点一下。返回光标有没有真的挪到那儿——低完整性进程（被别的沙箱/脚本拉起的那种）
+    调 SetCursorPos 会被系统静默拒绝，这时候再发 Ctrl+V 就是打在空处，必须让调用方知道。"""
+    u32.SetCursorPos(x, y)
+    p = w.POINT()
+    u32.GetCursorPos(ctypes.byref(p))
+    if (p.x, p.y) != (x, y):
+        time.sleep(0.08)
+        u32.SetCursorPos(x, y)
+        u32.GetCursorPos(ctypes.byref(p))
+    moved = (p.x, p.y) == (x, y)
+    _log(f"click: want=({x},{y}) cursor=({p.x},{p.y}) moved={moved}")
+    if not moved:
+        return False
+    time.sleep(0.05)
+    u32.mouse_event(0x2, 0, 0, 0, 0)  # 左键按下
+    u32.mouse_event(0x4, 0, 0, 0, 0)  # 抬起
+    return True
+
+
+def _activate(hwnd):
+    """把聊天窗口拿到前台。调用者自己就是前台进程时直接设就行（实测返回 1 且生效）；
+    后台进程会被前台锁挡住，这时才需要 AttachThreadInput 绕。
+    注意 AttachThreadInput(self, self) 是空操作，而把线程从自己身上 detach 反而会把输入队列搞乱——
+    所以只在两个线程真的不同时才用，省掉这个坑。"""
+    if u32.GetForegroundWindow() == hwnd:
+        return True
+    if u32.SetForegroundWindow(hwnd):
+        time.sleep(0.12)
+        if u32.GetForegroundWindow() == hwnd:
+            return True
+    fg = u32.GetForegroundWindow()
+    fg_tid = u32.GetWindowThreadProcessId(fg, None)
+    our_tid = k32.GetCurrentThreadId()
+    if fg_tid and fg_tid != our_tid:
+        u32.AttachThreadInput(our_tid, fg_tid, True)
+        u32.SetForegroundWindow(hwnd)
+        u32.AttachThreadInput(our_tid, fg_tid, False)
+        time.sleep(0.12)
+    return u32.GetForegroundWindow() == hwnd
+
+
 def fill(hwnd, area, text, app=None):
     """area = 消息区 (x0, y0, x1, y1)；输入框就在底线 y1 下面。
     app 只提供落点偏移（微信 60/40，Telegram 200/34：它的输入条左边先是附件按钮，
@@ -64,24 +120,22 @@ def fill(hwnd, area, text, app=None):
     dy = app.input_dy if app is not None else 40
     cx, cy = r.left + x0 + dx, r.top + y1 + dy  # 分隔线下 dy = 输入框文字区；工具栏和「发送」在输入区最底下，碰不到
     unminimize(hwnd)
+    _log(f"area={tuple(area)} rect=({r.left},{r.top},{r.right},{r.bottom}) click=({cx},{cy}) "
+         f"text_len={len(text)} fg0={u32.GetForegroundWindow():#x} hwnd={hwnd:#x}")
 
-    # SetForegroundWindow 有前台窗口保护，普通后台进程会被拒；AttachThreadInput 绕过
-    fg = u32.GetForegroundWindow()
-    if fg != hwnd:
-        fg_tid = u32.GetWindowThreadProcessId(fg, None)
-        our_tid = k32.GetCurrentThreadId()
-        u32.AttachThreadInput(our_tid, fg_tid, True)
-        u32.SetForegroundWindow(hwnd)
-        u32.AttachThreadInput(our_tid, fg_tid, False)
-        time.sleep(0.15)  # 给微信一点时间响应前台切换
+    ok = _activate(hwnd)
+    _log(f"activate: ok={ok} fg1={u32.GetForegroundWindow():#x}")
 
     old = w.POINT()
     u32.GetCursorPos(ctypes.byref(old))
-    u32.SetCursorPos(cx, cy)
-    time.sleep(0.05)
-    u32.mouse_event(0x2, 0, 0, 0, 0)  # 左键按下
-    u32.mouse_event(0x4, 0, 0, 0, 0)  # 抬起
-    time.sleep(0.05)
+    if not _click(cx, cy):  # 第一次点：激活窗口 + 把光标放进输入框
+        raise RuntimeError("光标移不到聊天窗口（本程序权限不足，请从桌面直接双击启动，不要由别的程序/脚本拉起）")
+    if u32.GetForegroundWindow() != hwnd:
+        # 后台进程发起的第一次点击，有时只被用来激活窗口，焦点没落到输入框——补一次
+        time.sleep(0.25)
+        _click(cx, cy)
+    time.sleep(0.15)  # 给 Qt 把焦点落下去的时间：实测 0.05 秒不够，Ctrl+V 会打在空处
+    _log(f"after click: fg2={u32.GetForegroundWindow():#x}")
     u32.SetCursorPos(old.x, old.y)
     time.sleep(0.05)
     # 光标移到已有文本的绝对末尾：点击落在文字中间时 caret 会插在中间，
@@ -95,4 +149,5 @@ def fill(hwnd, area, text, app=None):
     u32.keybd_event(0x56, 0, 0, 0)  # V
     u32.keybd_event(0x56, 0, 2, 0)
     u32.keybd_event(0x11, 0, 2, 0)
+    _log(f"keys sent: fg3={u32.GetForegroundWindow():#x}")
     # 到此为止。发不发、改不改，人来。
