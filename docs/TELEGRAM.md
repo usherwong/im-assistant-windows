@@ -52,7 +52,15 @@ background with that panel colour. Telegram Desktop breaks those assumptions:
     for *every* window here, not just Telegram). The BitBlt frame is taken from the DWM visible bounds
     so it shares the origin used by `fill()`.
 - **`app/fill.py`, `main.py`** — the paste target offset comes from the app row instead of a
-  hard-coded 60/40.
+  hard-coded 60/40, and it is clamped to a third of the pane width. Measured on a live window: the
+  paperclip button occupies x 20..70 of the input bar and the text placeholder starts at x 103, so
+  the old 60/40 target (meant for WeChat) landed on the gap between them and opened the file chooser
+  — the paste never reached the field. Telegram now uses `input_dx=200` (well inside the text area),
+  WeChat keeps 60.
+- **`app/overlay.py` / `main.dock()`** — the panel used to sit at the top-right corner of the screen,
+  nowhere near the chat. It now docks 12px to the right of the chat window, top-aligned, flips to the
+  left side when the right one is off-screen, clamps inside the work area, and follows the window when
+  it is moved or resized (checked every tick, only re-placed when the window rect actually changes).
 - **`probe/probe_telegram.py`** — read-only probe: chosen window, capture backend, both pane-finder
   results, message-area palette, header OCR, every classified line/box. No clicks, no typing, no
   sending.
@@ -99,6 +107,9 @@ bubble colour to `_telegram_me`.
 - **Group chat sender names.** Telegram draws them on the wallpaper, where the "modal colour ≥ 45%"
   test drops them as image text, so group messages carry no speaker name. 1:1 chats are unaffected.
 - **Tray.** Closed to tray → no visible window → the app reports "未找到聊天窗口".
+- **Short screens.** The panel is 804pt tall and does not shrink, so on a 900pt-tall screen with the
+  chat window pushed down it is clamped to the top of the work area instead of following the window
+  top exactly (it stays beside it, just not top-aligned).
 - **Two chat apps at once.** `find_chat_hwnd` walks `chatapps.APPS` in order, so with WeChat and
   Telegram both open WeChat wins (same as before this change). Close one, or pin the order, if you
   switch between them.
