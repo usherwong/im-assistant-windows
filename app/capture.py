@@ -174,36 +174,38 @@ def _row_share(row):
     return float(cnt.max()) / max(1, len(row))
 
 
-def _chat_area_patterned(full, margin=6):
+def _chat_area_patterned(full, margin=10):
     """Telegram 的消息区底下是一张壁纸（图案/照片/渐变），不是纯色，所以不能像微信那样找「众数底色」。
-    改成找「不是界面底色的那一大块」：
-    - 界面底色 = 整窗最常见的颜色——聊天列表、头部、输入条、标题区都是它
-    - 左右：壁纸列整列都不是界面底色（列表列只有头像/选中行/文字那几行不是），取最长的一段；
-      窗口边缘几像素可能混进桌面别的东西，margin 里不看
-    - 上下：面板范围内壁纸行占多数；头部、输入条是纯色整行，自然被排除
-    - 置顶消息条：面板顶上一条铺满宽度、几乎单色的横带，不是消息，跳掉
-    壁纸被设成纯色（或和界面底色一样）时这块会太窄 → 返回 None，调用方退回纯色那套。
-    实测（1626x1261，浅色主题 + 默认绿壁纸）：x 585..1620、y 155..1157，跟眼睛看的边界一致。"""
+    两个锚点，都靠「面板左边那条永远露出来的壁纸条」：
+    - 左右：气泡、卡片、图片都有内边距，盖不住面板最左边那几列，所以
+      「整列里有一段连续 ≥ H/2 行都不是界面底色」的列只可能是壁纸列，最左那根就是面板左边界；
+      右边直接取窗口右缘（Telegram 的对话面板一直顶到窗口右边）。
+    - 上下：沿那条内边找最长的一段连续壁纸行。头部、输入条是纯色条，自然断掉；
+      整屏宽的大白卡片把整行刷成底色也不影响，因为内边那几列还是壁纸。
+    - 置顶消息条：面板顶上一条铺满宽度、几乎单色的横带，不是消息，跳过。
+    实测：普通会话 1626x1261 → x 585..1616 y 156..1156；机器人会话（整屏白卡片）→ x 574..1594，
+    改之前被大白卡片带到右边只剩 350px 宽。
+    壁纸被设成纯色（或和界面底色一样）时这里认不出来 → 返回 None，调用方退回纯色那套。"""
     H, W = full.shape[:2]
     if W < 400 or H < 240:
         return None
-    chrome = _mode_color(full)
-    mask = np.abs(full.astype(np.int16) - chrome).sum(axis=2) > 26
-    col = mask[H // 4: H * 3 // 4].mean(axis=0)
-    col[:margin] = False
-    col[W - margin:] = False
-    x0, x1 = _longest_run(col > 0.5, max(120, W // 6))
-    if x0 is None or x1 - x0 < max(150, W // 6):
+    mask = np.abs(full.astype(np.int16) - _mode_color(full)).sum(axis=2) > 26
+    half = H // 2
+    cum = np.cumsum(mask, axis=0)
+    col_ok = ((cum[half:] - cum[:-half]) == half).any(axis=0)  # 有连续 H/2 行不是底色 = 壁纸列
+    col_ok[:max(20, W // 10)] = False  # 窗口左缘那条不可见的边框列也不是底色
+    xs = np.flatnonzero(col_ok)
+    if xs.size == 0:
         return None
-    row = mask[:, x0:x1].mean(axis=1)
-    row = np.convolve(row, np.ones(5) / 5, mode="same")  # 白泡把一两行压下去时不至于断掉
-    y0, y1 = _longest_run(row > 0.3, max(80, H // 8))
-    if y0 is None or y1 - y0 < max(80, H // 8):
+    x0, x1 = int(xs[0]), W - margin
+    if x1 - x0 < max(150, W // 5):
+        return None
+    strip = mask[:, x0 + 2:x0 + 12].mean(axis=1)
+    y0, y1 = _longest_run(strip > 0.6, 80)
+    if y0 is None:
         return None
     while y0 < y1 - 80 and _row_share(full[y0, x0:x1]) > 0.9:  # 置顶消息条：整行一个颜色
         y0 += 1
-    if y1 - y0 < 80:
-        return None
     # 面板底色取壁纸的左内边（气泡有内边距，这一条一定是壁纸）：worker 拿它判「字是不是印在面板上」，
     # 取消息区众数会把大白泡算成面板色，短句就被当成发言人名了
     return x0, y0, x1, y1, _wall_color(full[y0:y1, x0 + 2:x0 + 40]), 0
