@@ -107,7 +107,7 @@ KAKAOTALK = ChatApp("kakaotalk", "카카오톡", ("kakaotalk.exe",), "", ("카�
 TELEGRAM = ChatApp("telegram", "Telegram", ("telegram.exe",), "Telegram",
                    ("", "QTrayIconMessageWindow", "_q_titlebar"),
                    "rapidocr", " ", _telegram_me, clean=_telegram_clean, min_share=0.45,
-                   area="patterned", input_dx=90, input_dy=34)
+                   area="patterned", input_dx=200, input_dy=34)
 
 APPS = {a.key: a for a in (WECHAT, KAKAOTALK, TELEGRAM)}
 DEFAULT = WECHAT
