@@ -1,3 +1,5 @@
+> **这个 Fork 追加了**：Telegram 适配、角色与档案（含对方档案）、分场景判断题库、对话总结、中英双语（界面中文 / 填入原文）。`main` 上是上游原版内容，改动都在分支里；发行说明见 [docs/RELEASE-0.2.0.md](docs/RELEASE-0.2.0.md)，设计文档见 [docs/ROADMAP.md](docs/ROADMAP.md)。
+
 # JevChat-Windows
 
 本仓库只维护当前这一套识别。有能力的人可以 Fork 后自行适配别的聊天窗口，作者不提供这项适配，也不对 Fork 出去的改动负责。
