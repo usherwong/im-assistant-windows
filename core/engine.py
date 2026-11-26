@@ -75,13 +75,16 @@ def analyze(messages: list, relationship: str, model: str | None = None,
     except JevError:
         pass  # 退回盲起草 + 老的一次合问；错误不打日志（里面可能带请求内容）
 
-    candidates = draft_candidates(messages, relationship, provider=provider, model=model,
-                                  base_url=base_url, timeout=timeout, keep=context,
-                                  reply_to=reply_to, style=style, thinking=thinking,
-                                  guidance=guidance_text(answers, scene) if judged else None,
-                                  role=role, facts=facts, contact=contact)
-    if not candidates:  # 注入过滤可以把起草结果全扔掉；接着取 [0] 会 IndexError
+    pairs = draft_candidates(messages, relationship, provider=provider, model=model,
+                             base_url=base_url, timeout=timeout, keep=context,
+                             reply_to=reply_to, style=style, thinking=thinking,
+                             guidance=guidance_text(answers, scene) if judged else None,
+                             role=role, facts=facts, contact=contact)
+    if not pairs:  # 注入过滤可以把起草结果全扔掉；接着取 [0] 会 IndexError
         raise JevError("起草结果没有可用候选回复")
+    # 界面看中文（display），填入/复制用对方语言（send）；单语时两者相同
+    candidates = [p["display"] for p in pairs]
+    sends = [p.get("send") or p["display"] for p in pairs]
 
     questions = {} if judged else dict(scene.questions)
     if len(candidates) >= 2:  # 起草只给了 1 条就没什么可排的，判断题照问
@@ -112,6 +115,7 @@ def analyze(messages: list, relationship: str, model: str | None = None,
 
     return {
         "candidates": candidates,
+        "sends": sends,       # 真正写进输入框的文本（对方语言）；界面显示用 candidates
         "best_index": best_index,
         "best_reply": candidates[best_index],
         "scores": scores,

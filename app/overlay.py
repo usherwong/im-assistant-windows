@@ -254,6 +254,7 @@ class Overlay:
         self._summary_busy = set()   # 正在总结的会话
         self.result_of = result_of
         self.cands = []
+        self.sends = []
         self.cards = []
         self._busy = False
         self._current = False
@@ -983,11 +984,17 @@ class Overlay:
         self.pages.setCurrentWidget(self.home)
         self.settingsButton.setEnabled(True)
 
+    def _send_of(self, index):
+        """真正写进输入框的那句：对方说英文时是英文，中文时和界面显示的一样。"""
+        if index < len(self.sends):
+            return self.sends[index]
+        return self.cands[index] if index < len(self.cands) else ""
+
     def _fill(self, index):
         if self._busy or not self._current or index >= len(self.cands):
             return
         try:
-            self.on_fill(self.cands[index])
+            self.on_fill(self._send_of(index))
         except Exception as e:
             # 状态栏直接给原因（权限、剪贴板被占…），聊天记录里留类型和压缩堆栈
             reason = " ".join(str(e).split())[:42]
@@ -1001,7 +1008,7 @@ class Overlay:
     def _copy(self, index):
         if self._busy or not self._current or index >= len(self.cands):
             return
-        self.app.clipboard().setText(self.cands[index])
+        self.app.clipboard().setText(self._send_of(index))
         self.set_status("回复已复制，可粘贴并修改。", "success")
 
     def _capture_toggled(self, on):
@@ -1239,6 +1246,7 @@ class Overlay:
             self.show(result)
         else:
             self.cands = []
+            self.sends = []
             self._clear_cards()
             self.insight.hide()
             self.referenceNote.hide()
@@ -1255,6 +1263,7 @@ class Overlay:
         self.set_busy(False)
         self._current = bool(self.cands)
         self._clear_cards()
+        self.sends = list(result.get("sends") or [])   # 真正发出去的文本（对方语言）；旧结果没有就退回 display
         best = result.get("best_index", 0)
         if best not in range(len(self.cands)):
             best = 0
