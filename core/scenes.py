@@ -110,7 +110,10 @@ def _professional(kind: str) -> tuple[dict, dict, tuple]:
         "best_action": {
             "type": "choice",
             "instructions": (
-                "What type of next action is best? Choose the action, not the wording. "
+                "Recommend exactly one next move for this stage. Choose the action, not the wording. "
+                "Hard rules: if commitment is polite_deferral and nothing has been delivered yet, "
+                "do not push for a decision — provide value, ask a discovery question, or hold. "
+                "If the concern is still_open, ask what the next step needs or settle it before advancing. "
                 "If you do not actually know the fact they asked for, choose verify_first "
                 "instead of inventing an answer."
             ),
@@ -120,8 +123,66 @@ def _professional(kind: str) -> tuple[dict, dict, tuple]:
                                  "(their constraint, timing, or what they are comparing)."),
                 "propose_time": ("Propose or confirm a concrete time to talk, meet, or send something."),
                 "acknowledge": ("Keep it short and human without pushing; they need space or a light reply."),
+                "slow_down": ("Do not advance this turn. Reply warmly and briefly, leave room, "
+                              "and let them come back — pushing now would burn the opening."),
+                "close_commitment": ("Turn the soft interest into one concrete commitment (a time, "
+                                     "a document, an intro), then stop."),
                 "verify_first": ("You do not have the fact yet — look it up or say you will check, "
                                  "do not guess or promise numbers."),
+            },
+        },
+        "commitment": {
+            "type": "choice",
+            "instructions": (
+                "Is the counterpart's latest reply a real commitment or just courtesy? "
+                "A real commitment needs at least one of: a concrete condition, a specific time, "
+                "a named action, or a deliverable. Hard rule, no exceptions: "
+                "'sounds interesting', 'quite interested', 'let me think', 'we will talk later', "
+                "'I will look into it', 'maybe' are ALWAYS polite_deferral. "
+                "Enthusiasm carrying no detail is deferral, however warm it reads."
+            ),
+            "criteria": {
+                "true_commitment": ("The latest reply commits to something checkable: a time, "
+                                    "a named action, a document, or a next step they will do."),
+                "polite_deferral": ("Warm or agreeable wording with no checkable element — "
+                                    "praise, interest, 'I will think about it', or a vague yes."),
+            },
+        },
+        "delivery": {
+            "type": "choice",
+            "instructions": (
+                "Read the whole conversation and classify the counterpart's record of following "
+                "through on what they said they would do. Judge only what is visible in the "
+                "transcript; if nothing was ever promised, choose no_commitment_yet. "
+                "Partial delivery counts as partial even if small. Two or more undelivered "
+                "commitments mean reliability is low no matter how good the opportunity looks."
+            ),
+            "criteria": {
+                "no_commitment_yet": "They have not promised anything concrete yet — nothing to grade.",
+                "committed_not_delivered": ("At least one concrete promise, and none of them delivered "
+                                            "so far (no document, no time, no intro)."),
+                "partially_delivered": ("Some of what was promised arrived but not all — "
+                                        "part of a document, one of two items, a late answer."),
+                "delivered_once": "Exactly one concrete promise was followed through.",
+                "delivered_twice_plus": "Two or more concrete promises were followed through.",
+            },
+        },
+        "concern": {
+            "type": "choice",
+            "instructions": (
+                "Track the counterpart's open concern — price, timing, travel, risk, privacy, "
+                "internal approval — and where it stands. Use the whole conversation. "
+                "Choose unclear when they hinted at a worry but never said what it was."
+            ),
+            "criteria": {
+                "not_raised": "They have not raised any concrete concern.",
+                "resolved": ("A concern was raised and they accepted the answer or moved on "
+                             "without re-raising it."),
+                "still_open": ("A concern was raised and remains unanswered or unresolved in the "
+                               "transcript — do not advance as if it were settled."),
+                "reopened": ("A concern already answered came back — the earlier answer did not land."),
+                "avoided": ("They brought up a concern and then changed the subject; "
+                            "they may not want it settled here."),
             },
         },
         "should_push": {
@@ -146,7 +207,18 @@ def _professional(kind: str) -> tuple[dict, dict, tuple]:
                      "understanding": "需要被理解", "nothing": "无需补充"},
             "best_action": {"give_info": "给岗位信息", "ask_question": "问动机或顾虑",
                             "propose_time": "约电话", "acknowledge": "保持轻，不推进",
+                            "slow_down": "放慢，先别推", "close_commitment": "要一个明确承诺",
                             "verify_first": "先核实对方状态"},
+            "commitment": {"true_commitment": "真承诺（有时间/动作/交付物）",
+                           "polite_deferral": "客气（没细节）"},
+            "delivery": {"no_commitment_yet": "还没承诺过",
+                         "committed_not_delivered": "承诺了没兑现",
+                         "partially_delivered": "部分兑现",
+                         "delivered_once": "兑现过一次",
+                         "delivered_twice_plus": "兑现过两次以上"},
+            "concern": {"not_raised": "没提顾虑", "resolved": "顾虑已解决",
+                        "still_open": "顾虑还开着", "reopened": "顾虑又提了",
+                        "avoided": "提了又岔开"},
             "engagement": {},
         }
     else:
@@ -158,10 +230,22 @@ def _professional(kind: str) -> tuple[dict, dict, tuple]:
                      "understanding": "需要被理解", "nothing": "无需补充"},
             "best_action": {"give_info": "给具体信息", "ask_question": "问一个具体问题",
                             "propose_time": "约时间", "acknowledge": "简短回应，不推进",
+                            "slow_down": "放慢，先别推", "close_commitment": "要一个明确承诺",
                             "verify_first": "先核实再答"},
+            "commitment": {"true_commitment": "真承诺（有时间/动作/交付物）",
+                           "polite_deferral": "客气（没细节）"},
+            "delivery": {"no_commitment_yet": "还没承诺过",
+                         "committed_not_delivered": "承诺了没兑现",
+                         "partially_delivered": "部分兑现",
+                         "delivered_once": "兑现过一次",
+                         "delivered_twice_plus": "兑现过两次以上"},
+            "concern": {"not_raised": "没提顾虑", "resolved": "顾虑已解决",
+                        "still_open": "顾虑还开着", "reopened": "顾虑又提了",
+                        "avoided": "提了又岔开"},
             "engagement": {},
         }
-    guide = (("stance", "对方状态"), ("need", "对方需要"), ("best_action", "建议动作"))
+    guide = (("stance", "对方状态"), ("need", "对方需要"), ("best_action", "建议动作"),
+             ("commitment", "承诺成色"), ("delivery", "兑现记录"), ("concern", "顾虑状态"))
     return questions, labels, guide
 
 

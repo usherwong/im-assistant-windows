@@ -477,6 +477,8 @@ class Overlay:
         insight_box.addWidget(self.summary)
         self.intent = _label("", 12, _MUTED)
         insight_box.addWidget(self.intent)
+        self.signals = _label("", 11, _MUTED)  # 承诺成色 / 兑现记录 / 顾虑状态（招聘与职场题集才有）
+        insight_box.addWidget(self.signals)
         bind(self.insight, "根据当前聊天片段推测，可能理解有偏差。紧张度为 0–9 的参考评分。", "setToolTip")
         self.insight.hide()
         body.addWidget(self.insight)
@@ -1279,11 +1281,23 @@ class Overlay:
         def _intent_text():
             parts = []
             for name, title in scene.guide:
-                if name != action_key:
-                    parts.append(T(title) + " · " + _choice(answers, name, scene))
+                if name in (action_key, "commitment", "delivery", "concern"):
+                    continue
+                parts.append(T(title) + " · " + _choice(answers, name, scene))
             return "\n".join(parts)
 
         bind(self.intent, _intent_text)
+
+        def _signals_text():
+            parts = []
+            for name, title in scene.guide:
+                if name not in ("commitment", "delivery", "concern"):
+                    continue
+                parts.append(f"{T(title)} {_choice(answers, name, scene)}")
+            return " ｜ ".join(parts)
+
+        bind(self.signals, _signals_text)
+        self.signals.setVisible(bool(_signals_text()))
         score = (answers.get(scene.score_key) or {}).get("score")
         valid_score = isinstance(score, (int, float)) and isfinite(score) and 0 <= score <= 9
         score_label = scene.score_label
