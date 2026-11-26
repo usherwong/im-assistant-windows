@@ -116,5 +116,12 @@ bubble colour to `_telegram_me`.
 - **Sandboxed sessions.** Windows Graphics Capture, clipboard and input injection are unavailable in
   some restricted sessions (VMs, some RDP setups, containerised shells). Capture degrades to BitBlt
   (works); "填入" needs clipboard + a click, so it only works in a normal interactive session.
+- **Integrity levels.** "填入" drives another process's mouse and keyboard, so Windows requires the app
+  to run at the same integrity level as the chat client (both MEDIUM). If the app is started by a
+  sandboxed/scripted parent it can inherit LOW: `SetCursorPos` is then silently refused and the paste
+  goes nowhere. The app detects this at startup and, if a fill fails, says so in the status bar
+  ("光标移不过去…"). Measured on this machine: an exe started from the agent workspace got LOW, the
+  same exe copied outside it got MEDIUM and filled fine — so install the app outside a sandboxed
+  workspace directory.
 - **Themes.** `_telegram_me` knows the light and night bubbles plus right alignment; an unusual theme
   that paints own bubbles dark *and* very wide can still fool the geometry fallback.
