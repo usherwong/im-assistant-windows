@@ -22,7 +22,7 @@ from qfluentwidgets import (
 
 from app import i18n, settings
 from app.version import VERSION
-from core import jev_client, llm, providers
+from core import jev_client, llm, providers, scenes
 from core.questions import CHOICE_LABELS
 from app.i18n import LANGUAGES, T, bind
 
@@ -30,13 +30,15 @@ _LOG_LINES = 300
 _MUTED = "#68776f"
 _GREEN = "#18794e"
 _RELATIONSHIPS = [
-    ("恋人", "romantic partners"), ("朋友", "friends"), ("同事", "colleagues"),
+    ("不填", ""), ("恋人", "romantic partners"), ("朋友", "friends"), ("同事", "colleagues"),
     ("家人", "family"), ("自定义", None),
 ]
 
 
-def _choice(answers, name):
-    return T(CHOICE_LABELS[name].get((answers.get(name) or {}).get("choice"), "暂未判断"))
+def _choice(answers, name, scene=None):
+    """按题集取选项的中文标签：亲密关系用 CHOICE_LABELS，招聘/职场用各自题集的标签表。"""
+    labels = (getattr(scene, "labels", None) or CHOICE_LABELS).get(name) or {}
+    return T(labels.get((answers.get(name) or {}).get("choice"), "暂未判断"))
 
 
 def _mp_banner_path() -> str:
@@ -1237,12 +1239,25 @@ class Overlay:
         bind(self.insightTitle, lambda: T("对话参考 · 回复给 {name}").format(name=reply_to)
              if reply_to else T("对话参考"))
         answers = result.get("answers") or {}
-        bind(self.summary, lambda: T("建议：") + _choice(answers, "best_action"))
-        bind(self.intent, lambda: T("可能意图 · ") + _choice(answers, "true_intent") +
-                                 "\n" + T("可能需要 · ") + _choice(answers, "she_needs"))
-        score = (answers.get("danger_level") or {}).get("score")
+        scene = scenes.get(result.get("scene"))   # 结果自带题集：招聘场景的字段名/分数名都不一样
+        self._scene = scene
+        action_key = next((name for name, _ in scene.guide if name == "best_action"), "best_action")
+        action_title = next((title for name, title in scene.guide if name == action_key), "建议动作")
+        bind(self.summary, lambda: T(action_title) + "：" + _choice(answers, action_key, scene))
+
+        def _intent_text():
+            parts = []
+            for name, title in scene.guide:
+                if name != action_key:
+                    parts.append(T(title) + " · " + _choice(answers, name, scene))
+            return "\n".join(parts)
+
+        bind(self.intent, _intent_text)
+        score = (answers.get(scene.score_key) or {}).get("score")
         valid_score = isinstance(score, (int, float)) and isfinite(score) and 0 <= score <= 9
-        bind(self.tension, lambda: f"{T('紧张度')} {score:.0f}/9" if valid_score else T("紧张度待判断"))
+        score_label = scene.score_label
+        bind(self.tension, lambda: f"{T(score_label)} {score:.0f}/9" if valid_score
+             else T(score_label + "待判断"))
         color = "#996819" if valid_score and score >= 3 else _MUTED
         if valid_score and score >= 6:
             color = "#b44832"

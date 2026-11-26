@@ -17,7 +17,7 @@ from core.providers import CUSTOM, DRAFT_PROVIDERS, JEV_ENV, JEV_PROVIDERS, LEGA
 _ROOT = (os.path.dirname(sys.executable) if getattr(sys, "frozen", False)
          else os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _CONFIG = os.path.join(_ROOT, "config.json")
-_DEFAULT_RELATIONSHIP = "romantic partners"
+_DEFAULT_RELATIONSHIP = ""  # 有了角色档案+对方档案之后，关系只是可选的备注（见 docs/ROADMAP.md 6.1）
 _DEFAULT_CONTEXT = 10
 _DEFAULT_JEV = "openrouter"
 _DEFAULT_DRAFT = "deepseek"

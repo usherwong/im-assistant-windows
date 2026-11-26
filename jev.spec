@@ -11,6 +11,7 @@ hiddenimports = [
     # 父进程这边 engine 也是运行时才走到，一并钉死，别指望静态分析都能扫出来
     "app.worker", "app.capture", "app.ocr", "app.fill", "app.overlay", "app.settings",
     "app.version", "app.update", "app.debugwin",  # debugwin 是开了调试视图才 import 的
+    "app.roles", "core.scenes",  # 角色档案 / 按场景的题库：draft 里是函数内 import，静态扫不到
     "core.engine", "core.draft", "core.jev_client", "core.questions", "core.providers",
     "core.llm",
 ]

@@ -14,7 +14,7 @@ import time
 import traceback
 from collections import deque
 
-from app import settings, update, worker
+from app import roles, settings, update, worker
 from app.capture import dpi_aware, find_chat_hwnd, integrity_rid, window_rect
 from app.fill import fill
 from app.overlay import Overlay
@@ -121,15 +121,22 @@ def on_toggle_capture(on):
 def analyze_bg(msgs, title, revision, reply_to=None):
     """后台线程只跑网络调用，结果丢队列；UI 只在主线程的 tick 里动（Qt 不能跨线程碰）。"""
     try:
-        results.put(("ok", analyze(msgs, settings.relationship(), context=settings.context(),
-                                   model=settings.draft_model() or None,
-                                   provider=settings.draft_provider(),
-                                   base_url=settings.draft_base_url() or None,
-                                   reply_to=reply_to, style=settings.style(),
-                                   thinking=settings.thinking(),
-                                   jev_provider=settings.jev_provider(),
-                                   jev_model=settings.jev_model() or None),
-                     title, revision))
+        role = roles.role_for(title)          # 这个会话绑的角色（没有就默认角色）
+        contact = roles.contact(title)        # 这个会话的对方档案（可能只有 chat_key）
+        # 只把「对方刚问到的」事实注入起草：命中才算，命中不了就只发人设卡
+        said = next((str(t) for who, t, *_ in reversed(msgs) if who == "her"), "")
+        facts = roles.match_facts(role, said) if said else []
+        result = analyze(msgs, settings.relationship(), context=settings.context(),
+                         model=settings.draft_model() or None,
+                         provider=settings.draft_provider(),
+                         base_url=settings.draft_base_url() or None,
+                         reply_to=reply_to, style=settings.style(),
+                         thinking=settings.thinking(),
+                         jev_provider=settings.jev_provider(),
+                         jev_model=settings.jev_model() or None,
+                         role=role, contact=contact or None, facts=facts)
+        result["role"] = role.get("name", "")
+        results.put(("ok", result, title, revision))
     except Exception as e:
         results.put(("err", f"{T('分析失败: ')}{e}", title, revision))
 

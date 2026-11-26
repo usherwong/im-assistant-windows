@@ -227,26 +227,45 @@ _GUIDE_FIELDS = (("true_intent", "对方意图"), ("she_needs", "对方需要"),
                  ("best_action", "建议动作"))
 
 
-def guidance_text(answers: dict) -> str:
-    """Jev 判断 → 喂给起草的中文小抄。只写有答案的那几项；没答案返回空串。"""
+def guidance_text(answers: dict, scene=None) -> str:
+    """Jev 判断 → 喂给起草的中文小抄。只写有答案的那几项；没答案返回空串。
+
+    scene 为 None 时按老的「亲密关系」7 题取（向后兼容）；传 core.scenes.Scene 时按那套题的
+    guide / 标签 / 分数名取（招聘场景的分数就叫「兴趣度」而不是「紧张度」）。
+    """
+    if scene is None:
+        fields, labels = _GUIDE_FIELDS, CHOICE_LABELS
+        score_key, score_label, noul_key = "danger_level", "紧张度", "literal_question"
+        header = "判断参考（Jev 给的，起草要顺着它写，但口吻仍按我的）："
+    else:
+        fields, labels = scene.guide, scene.labels
+        score_key, score_label, noul_key = scene.score_key, scene.score_label, scene.noul_key
+        header = f"判断参考（{scene.label}场景，Jev 给的，起草要顺着它写，但口吻仍按我的）："
     lines = []
-    for name, title in _GUIDE_FIELDS:
+    for name, title in fields:
         choice = ((answers or {}).get(name) or {}).get("choice")
-        label = CHOICE_LABELS[name].get(choice)
+        label = (labels.get(name) or {}).get(choice)
         if label:
             lines.append(f"- {title}：{label}（{choice}）")
     tail = []
-    score = ((answers or {}).get("danger_level") or {}).get("score")
+    score = ((answers or {}).get(score_key) or {}).get("score")
     if isinstance(score, (int, float)) and not isinstance(score, bool):
-        tail.append(f"紧张度：{score:.0f}/9")
-    noul = ((answers or {}).get("literal_question") or {}).get("noul")
-    if isinstance(noul, (int, float)) and not isinstance(noul, bool):
-        tail.append("字面意思：" + ("是" if noul >= 0.5 else "否（有潜台词）"))
+        tail.append(f"{score_label}：{score:.0f}/9")
+    if noul_key:
+        noul = ((answers or {}).get(noul_key) or {}).get("noul")
+        if isinstance(noul, (int, float)) and not isinstance(noul, bool):
+            tail.append("字面意思：" + ("是" if noul >= 0.5 else "否（有潜台词）"))
     if tail:
         lines.append("- " + "；".join(tail))
     if not lines:
         return ""
-    return "判断参考（Jev 给的，起草要顺着它写，但口吻仍按我的）：\n" + "\n".join(lines)
+    return header + "\n" + "\n".join(lines)
+
+
+def choice_label(scene, name: str, value) -> str:
+    """按题集取某个选项的中文标签；取不到给「暂未判断」。界面用它，避免硬编码 CHOICE_LABELS。"""
+    labels = (getattr(scene, "labels", None) or CHOICE_LABELS).get(name) or {}
+    return labels.get(value, "暂未判断")
 
 
 def build_state(messages: list, relationship: str, keep: int = 10,
