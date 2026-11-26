@@ -20,6 +20,9 @@ from app.fill import fill
 from app.overlay import Overlay
 from app.version import VERSION
 from core.engine import analyze
+from core import scenes
+from core.summary import summarize, to_text
+import os
 from app.i18n import T
 
 # {会话名: {history, result, rev, target, senders}}：每个会话各自的上下文、上次结果和版本号，互不串味
@@ -229,6 +232,7 @@ def drain():
         chat["rev"] += 1  # 这个会话有新消息了，它在跑的分析作废
         if title == ov.current_chat():  # 看的是别的会话就别把人家的候选划掉
             ov.invalidate_replies()
+        ov.mark_summary_stale(title)  # 总结还在，但已经落后于对话了
         for who, name, text in new:
             chat["history"].append((who, text, name))
             ov.log_message(who, text, name, chat=title)
@@ -266,10 +270,50 @@ def dock():
         ov.dock_to(rect)
 
 
+summaries = {}          # {会话名: {"text": 五段文本, "rev": 生成时的版本}}
+summary_busy = set()    # 正在总结的会话（防止连点）
+summary_results = queue.Queue()
+
+
+def start_summary(title):
+    """点「总结」：后台跑一次，结果回队列；同一条会话不并发跑两次。"""
+    if not title or title in summary_busy:
+        return
+    if not settings.has_llm_key():
+        ov.set_status(lambda name=settings.draft_provider_name():
+                      f"{T('起草来源 ')}{name}{T(' 没填密钥，去设置里补上')}", "warning")
+        return
+    msgs = chat_of(title)["history"]
+    if not msgs:
+        ov.set_summary_error(title, "这个会话还没识别到消息")
+        return
+    summary_busy.add(title)
+    ov.set_summary_busy(title, True)
+    threading.Thread(target=summary_bg, args=(title, msgs, chat_of(title)["rev"]), daemon=True).start()
+
+
+def summary_bg(title, msgs, revision):
+    try:
+        role = roles.role_for(title)
+        contact = roles.contact(title)
+        data = summarize(msgs, role=role, contact=contact or None, scene=scenes.for_role(role),
+                         provider=settings.draft_provider(),
+                         model=settings.draft_model() or None,
+                         base_url=settings.draft_base_url() or None)
+        summary_results.put(("ok", title, data, revision))
+    except Exception as e:
+        summary_results.put(("err", title, str(e), revision))
+
+
 def tick():
     try:
         dock()
         drain()
+        if os.environ.get("JEV_AUTO_SUMMARY") and not state.get("auto_summary"):
+            title = ov.current_chat()
+            if title and chat_of(title)["history"]:
+                state["auto_summary"] = True  # 调试/截图用：启动后自动总结当前会话一次
+                start_summary(title)
         while not update_result.empty():
             latest, url = update_result.get()
             ov.set_update(latest, url)
@@ -293,6 +337,17 @@ def tick():
                 ov.set_busy(False)
                 ov.set_status("生成失败，请检查网络和服务设置；新消息到来后会重试。", "error")
                 ov.log(r)
+        while not summary_results.empty():
+            kind, title, payload, revision = summary_results.get()
+            summary_busy.discard(title)
+            ov.set_summary_busy(title, False)
+            if kind == "ok":
+                text = to_text(payload)
+                summaries[title] = {"text": text, "rev": revision}
+                if title == ov.current_chat():
+                    ov.show_summary(title, text, stale=False)
+            elif title == ov.current_chat():
+                ov.set_summary_error(title, payload[:120])
     except Exception:
         traceback.print_exc()  # 一帧出错不退出
     ov.after(50, tick)
@@ -308,7 +363,7 @@ if __name__ == "__main__":  # Windows 的 spawn 会让子进程重新执行本�
     docked = None  # 上次贴靠用的窗口矩形；窗口没动就不用重新贴
     ov = Overlay(on_fill=fill_reply, on_toggle_capture=on_toggle_capture,
                  on_target_change=on_target_change, on_toggle_debug=set_debug,
-                 on_language_changed=on_language_changed,
+                 on_language_changed=on_language_changed, on_summary=start_summary,
                  result_of=lambda t: chats.get(t, {}).get("result"))
     try:
         state["hwnd"], found = find_chat_hwnd()

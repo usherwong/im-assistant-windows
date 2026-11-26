@@ -235,10 +235,11 @@ class _ReplyCard(_Surface):
 
 class Overlay:
     def __init__(self, on_fill, on_toggle_capture=None, on_target_change=None, result_of=None,
-                 on_toggle_debug=None, on_language_changed=None):
+                 on_toggle_debug=None, on_language_changed=None, on_summary=None):
         """result_of(会话名) → 那个会话上次的结果或 None；切着看别的会话时用它把旧结果放回来。
         on_target_change(会话名, 人名) → 用户在群里挑了回复对象。
-        on_toggle_debug(开不开) → 开关调试视图那个独立窗口。"""
+        on_toggle_debug(开不开) → 开关调试视图那个独立窗口。
+        on_summary(会话名) → 用户点了「总结」，后台跑一次。"""
         self.app = QApplication.instance() or QApplication([])
         setTheme(Theme.LIGHT)
         setThemeColor(_GREEN, save=False)
@@ -247,6 +248,10 @@ class Overlay:
         self.on_target_change = on_target_change
         self.on_toggle_debug = on_toggle_debug
         self.on_language_changed = on_language_changed
+        self.on_summary = on_summary
+        self._summaries = {}   # {会话名: 五段文本}
+        self._summary_stale = set()  # 有了新消息、但总结还没重算的会话
+        self._summary_busy = set()   # 正在总结的会话
         self.result_of = result_of
         self.cands = []
         self.cards = []
@@ -516,6 +521,26 @@ class Overlay:
         self.feed.hide()
         body.addWidget(self.feed)
         self._history_title()
+
+        # ── 对话总结（按需：点一下才跑，不跟着每条消息自动算） ──
+        self.summaryCard = _Surface()
+        sbox = QVBoxLayout(self.summaryCard)
+        sbox.setContentsMargins(14, 12, 14, 12)
+        sbox.setSpacing(6)
+        srow = QHBoxLayout()
+        srow.addWidget(_tlabel("对话总结", 13, "#304c3c", True), 1)
+        self.summaryButton = PushButton("")
+        self.summaryButton.setFixedHeight(26)
+        self.summaryButton.clicked.connect(self._on_summary_clicked)
+        srow.addWidget(self.summaryButton)
+        sbox.addLayout(srow)
+        self.summaryBody = _label("", 12, "#42574a")
+        sbox.addWidget(self.summaryBody)
+        self.summaryNote = _label("", 11, _MUTED)
+        sbox.addWidget(self.summaryNote)
+        body.addWidget(self.summaryCard)
+        self._render_summary()
+
         body.addStretch(1)
 
     def _build_settings(self):
@@ -1165,6 +1190,7 @@ class Overlay:
         self._follow_text()
         self._render_targets()
         self.show_cached(self.result_of(title) if self.result_of else None)
+        self._render_summary()
 
     def set_targets(self, chat, senders, current):
         """某个会话的发言人名单（最近的在前）和当前回复对象；正看着它才重画。"""
@@ -1486,6 +1512,58 @@ class Overlay:
             self.contactStatus.setText(f"{T('保存失败')}：{exc}")
             return
         self.contactStatus.setText(T("已保存"))
+
+    # ── 对话总结（M3）────────────────────────────────────────────────────
+    def _on_summary_clicked(self):
+        if self.on_summary:
+            self.on_summary(self.current_chat())
+
+    def _render_summary(self):
+        title = self.current_chat()
+        text = self._summaries.get(title)
+        if title in self._summary_busy:
+            self.summaryButton.setEnabled(False)
+            self.summaryButton.setText(T("总结中…"))
+            self.summaryBody.setText(T("正在读这段对话…"))
+            self.summaryNote.setText("")
+            return
+        self.summaryButton.setEnabled(True)
+        self.summaryButton.setText(T("重新总结") if text else T("总结"))
+        if text:
+            self.summaryBody.setText(text)
+            self.summaryNote.setText(T("有新消息，建议重新总结") if title in self._summary_stale else "")
+        else:
+            self.summaryBody.setText(T("点「总结」看看这段聊到哪了"))
+            self.summaryNote.setText("")
+
+    def show_summary(self, title, text, stale=False):
+        self._summaries[title] = text
+        if stale:
+            self._summary_stale.add(title)
+        else:
+            self._summary_stale.discard(title)
+        if title == self.current_chat():
+            self._render_summary()
+
+    def set_summary_busy(self, title, busy):
+        if busy:
+            self._summary_busy.add(title)
+        else:
+            self._summary_busy.discard(title)
+        if title == self.current_chat():
+            self._render_summary()
+
+    def set_summary_error(self, title, message):
+        self._summary_busy.discard(title)
+        if title == self.current_chat():
+            self._render_summary()
+            self.summaryNote.setText(f"{T('总结失败')}：{message}")
+
+    def mark_summary_stale(self, title):
+        if title in self._summaries:
+            self._summary_stale.add(title)
+            if title == self.current_chat():
+                self._render_summary()
 
     def _clear_cards(self):
         for card in self.cards:
