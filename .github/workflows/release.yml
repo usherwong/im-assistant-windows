@@ -45,6 +45,17 @@ jobs:
           Add-Content -Path $env:GITHUB_OUTPUT -Value "zip=$zip"
           "{0}  {1:N1} MB" -f $zip, ((Get-Item $zip).Length / 1MB)
 
+      - name: 读取发行说明（docs/RELEASE-<版本>.md，有就写进 Release）
+        id: notes
+        shell: pwsh
+        run: |
+          $ver = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME -replace '^v','' } else { '' }
+          $file = "docs/RELEASE-$ver.md"
+          $body = if ($ver -and (Test-Path $file)) { Get-Content $file -Raw } else { '' }
+          "body<<RELEASE_EOF" | Add-Content -Path $env:GITHUB_OUTPUT
+          $body | Add-Content -Path $env:GITHUB_OUTPUT
+          "RELEASE_EOF" | Add-Content -Path $env:GITHUB_OUTPUT
+
       - name: 上传构建产物
         if: always()  # 失败时也把已经有的东西捞上来
         uses: actions/upload-artifact@v4
@@ -58,5 +69,5 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: ${{ steps.pack.outputs.zip }}
-          body: ""
+          body: ${{ steps.notes.outputs.body }}
           generate_release_notes: false
