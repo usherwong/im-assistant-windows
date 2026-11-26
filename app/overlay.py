@@ -20,7 +20,7 @@ from qfluentwidgets import (
     setCustomStyleSheet, setFont, setTheme, setThemeColor,
 )
 
-from app import i18n, settings
+from app import i18n, roles, settings
 from app.version import VERSION
 from core import jev_client, llm, providers, scenes
 from core.questions import CHOICE_LABELS
@@ -319,6 +319,7 @@ class Overlay:
         outer.addWidget(self.pages, 1)
         self._build_home()
         self._build_settings()
+        self._build_profile()
         footer = QHBoxLayout()
         footer.setContentsMargins(20, 9, 8, 8)
         footer.addWidget(_tlabel(lambda: f"{T('仅填入输入框 · 发送由你确认')} · v{VERSION}", 11, _MUTED), 1)
@@ -334,6 +335,8 @@ class Overlay:
         self.set_status("等待新消息" if settings.has_key() else "需要配置模型",
                         "idle" if settings.has_key() else "warning")
         self.win.show()
+        if os.environ.get("JEV_OPEN_PROFILE"):  # 调试/截图用：启动就直接进档案页
+            QTimer.singleShot(800, self.open_profile)
 
     def dock_to(self, rect):
         """把面板贴到聊天窗口右侧：优先右边，屏幕放不下换左边，再不行贴屏幕右缘；竖直方向跟窗口顶部对齐。
@@ -412,6 +415,8 @@ class Overlay:
         bind(self.chatBox, "聊天窗口切到哪个会话这里就跟到哪个；也可以自己选一个，只看它的记录和建议", "setToolTip")
         self.chatBox.currentIndexChanged.connect(self._on_chat_selected)
         chat_row.addWidget(self.chatBox, 1)
+        self.profileButton = _tool(FIF.PEOPLE, "角色与档案", self.open_profile, self.win)
+        chat_row.addWidget(self.profileButton)
         self.chatFollow = _label("", 11, _MUTED)
         self.chatFollow.setFixedWidth(52)
         self.chatFollow.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
@@ -1256,10 +1261,11 @@ class Overlay:
         score = (answers.get(scene.score_key) or {}).get("score")
         valid_score = isinstance(score, (int, float)) and isfinite(score) and 0 <= score <= 9
         score_label = scene.score_label
-        bind(self.tension, lambda: f"{T(score_label)} {score:.0f}/9" if valid_score
+        level = "低" if not valid_score or score <= 3 else ("中" if score <= 6 else "高")
+        bind(self.tension, lambda: f"{T(score_label)} {score:.0f}/9 · {T(level)}" if valid_score
              else T(score_label + "待判断"))
-        color = "#996819" if valid_score and score >= 3 else _MUTED
-        if valid_score and score >= 6:
+        color = "#996819" if valid_score and score >= 4 else _MUTED   # 低/中/高 与颜色同一条线
+        if valid_score and score >= 7:
             color = "#b44832"
         qss = f"BodyLabel {{ color: {color}; background: transparent; }}"
         setCustomStyleSheet(self.tension, qss, qss)
@@ -1272,6 +1278,214 @@ class Overlay:
             self.set_status("建议已更新，选一句适合你的回复", "success")
         else:
             self.set_status("未生成可用回复，请等待下一条新消息。", "error")
+
+    # ── 角色与档案（M2）──────────────────────────────────────────────────
+    def _build_profile(self):
+        self.profile, body = self._scroll_page()
+        self._role_ids: list[str] = []
+        self._scene_ids: list[str] = [s.key for s in scenes.SCENES.values()]
+        heading = QHBoxLayout()
+        heading.addWidget(_tool(FIF.RETURN, "返回", self._close_profile, self.win))
+        heading.addWidget(_tlabel("角色与档案", 23, "#24382d", True), 1)
+        body.addLayout(heading)
+        body.addWidget(_tlabel("这个会话以谁的身份说话，以及对方的档案。保存后下一条消息立刻生效。",
+                               12, _MUTED))
+
+        def add_field(box, label, widget, hint=None):
+            box.addWidget(_tlabel(label, 13))
+            box.addWidget(widget)
+            if hint:
+                box.addWidget(self._hint(hint))
+
+        # —— 我的角色 ——
+        card = _Surface()
+        box = QVBoxLayout(card)
+        box.setContentsMargins(16, 16, 16, 16)
+        box.setSpacing(8)
+        box.addWidget(_tlabel("我的角色", 16, "#304c3c", True))
+        box.addWidget(_tlabel("改选就绑定到这个会话：以后进这个会话一直用它。", 12, _MUTED))
+        self.profileRoleBox = ComboBox()
+        self.profileRoleBox.setMinimumWidth(0)
+        bind(self.profileRoleBox, "这个会话用的角色", "setAccessibleName")
+        self.profileRoleBox.currentIndexChanged.connect(self._profile_role_changed)
+        box.addWidget(self.profileRoleBox)
+
+        self.roleName = LineEdit()
+        bind(self.roleName, "角色名，例如：员工1", "setPlaceholderText")
+        add_field(box, "名字", self.roleName)
+
+        self.roleScene = ComboBox()
+        self.roleScene.setMinimumWidth(0)
+        add_field(box, "判断题库", self.roleScene, "亲密关系用原来那 7 题；职场/招聘用各自的题集。")
+
+        self.roleIdentity = LineEdit()
+        bind(self.roleIdentity, "例如：做 AI 方向的猎头", "setPlaceholderText")
+        add_field(box, "身份", self.roleIdentity)
+
+        self.roleTone = LineEdit()
+        bind(self.roleTone, "例如：句子短、不用「亲/您」、偶尔自嘲", "setPlaceholderText")
+        add_field(box, "说话方式", self.roleTone)
+
+        self.rolePersonality = LineEdit()
+        bind(self.rolePersonality, "例如：共情强、结果导向、不喜欢被临时打断", "setPlaceholderText")
+        add_field(box, "性格", self.rolePersonality)
+
+        self.roleGoal = LineEdit()
+        bind(self.roleGoal, "例如：判断对方是否真在考虑机会", "setPlaceholderText")
+        add_field(box, "这轮目标", self.roleGoal)
+
+        self.roleBoundaries = PlainTextEdit()
+        self.roleBoundaries.setFixedHeight(64)
+        bind(self.roleBoundaries, "一行一条，例如：不聊私人事务", "setPlaceholderText")
+        add_field(box, "边界（一行一条）", self.roleBoundaries)
+
+        self.roleFacts = PlainTextEdit()
+        self.roleFacts.setFixedHeight(150)
+        bind(self.roleFacts, "标签 | 内容 | 补充 | public/personal | 别名1,别名2", "setPlaceholderText")
+        add_field(box, "事实表（命中才注入，一行一条）", self.roleFacts,
+                  "被问到才用：标签 | 内容 | 补充 | 敏感度(public/personal) | 检索别名（中英都写，逗号分隔）。"
+                  "secret 的不许写这里，放进保险箱。最多 30 条、每条 ≤60 字。")
+
+        self.roleConstraints = PlainTextEdit()
+        self.roleConstraints.setFixedHeight(64)
+        bind(self.roleConstraints, "一行一条，例如：被问私人生活只回「私人事务，暂无评论」", "setPlaceholderText")
+        add_field(box, "红线（一行一条，每次都会注入）", self.roleConstraints)
+
+        self.roleVault = _label("", 12, _MUTED)
+        add_field(box, "保险箱（只在这里看，永不进提示词）", self.roleVault)
+
+        self.roleStatus = _label("", 12, _MUTED)
+        save_role = PrimaryPushButton(T("保存角色"))
+        save_role.clicked.connect(self._save_role)
+        box.addWidget(save_role)
+        box.addWidget(self.roleStatus)
+        body.addWidget(card)
+
+        # —— 对方档案 ——
+        card = _Surface()
+        box = QVBoxLayout(card)
+        box.setContentsMargins(16, 16, 16, 16)
+        box.setSpacing(8)
+        box.addWidget(_tlabel("对方档案", 16, "#304c3c", True))
+        self.contactWho = _label("", 12, _MUTED)
+        box.addWidget(self.contactWho)
+
+        def contact_field(label, attr, placeholder):
+            edit = LineEdit()
+            bind(edit, placeholder, "setPlaceholderText")
+            add_field(box, label, edit)
+            setattr(self, attr, edit)
+            return edit
+
+        contact_field("姓名 / 称呼", "contactName", "例如：赵明")
+        contact_field("公司", "contactCompany", "例如：某新能源公司")
+        contact_field("职位", "contactPosition", "例如：工艺总监")
+        contact_field("来源 / 归属", "contactSource", "例如：候选池-A / 预选客户")
+        contact_field("阶段", "contactStage", "例如：在观望 / 已约面试")
+        contact_field("对方想要什么", "contactNeeds", "例如：薪资涨幅 30%，不想长期出差")
+        self.contactNotes = PlainTextEdit()
+        self.contactNotes.setFixedHeight(70)
+        bind(self.contactNotes, "备注：聊过什么、忌讳、家庭情况…", "setPlaceholderText")
+        add_field(box, "备注", self.contactNotes)
+
+        self.contactStatus = _label("", 12, _MUTED)
+        save_contact = PrimaryPushButton(T("保存对方档案"))
+        save_contact.clicked.connect(self._save_contact)
+        box.addWidget(save_contact)
+        box.addWidget(self.contactStatus)
+        body.addWidget(card)
+
+    def open_profile(self):
+        self._refresh_profile()
+        self.pages.setCurrentWidget(self.profile)
+
+    def _close_profile(self):
+        self.pages.setCurrentWidget(self.home)
+
+    def _refresh_profile(self):
+        chat = self.current_chat()
+        rows = roles.all_roles()
+        current = roles.role_for(chat)
+        self._role_ids = list(rows.keys())
+        self.profileRoleBox.blockSignals(True)
+        self.profileRoleBox.clear()
+        self.profileRoleBox.addItems([rows[rid].get("name") or rid for rid in self._role_ids])
+        if current["id"] in self._role_ids:
+            self.profileRoleBox.setCurrentIndex(self._role_ids.index(current["id"]))
+        self.profileRoleBox.blockSignals(False)
+        self.roleScene.blockSignals(True)
+        self.roleScene.clear()
+        self.roleScene.addItems([T(s.label) for s in scenes.SCENES.values()])
+        self.roleScene.blockSignals(False)
+        self._fill_role(current)
+        self._fill_contact(chat)
+
+    def _fill_role(self, row):
+        voice = row.get("voice") or {}
+        self.roleName.setText(row.get("name", ""))
+        index = self._scene_ids.index(row.get("scene")) if row.get("scene") in self._scene_ids else 0
+        self.roleScene.blockSignals(True)
+        self.roleScene.setCurrentIndex(index)
+        self.roleScene.blockSignals(False)
+        self.roleIdentity.setText(voice.get("identity", ""))
+        self.roleTone.setText(voice.get("tone", ""))
+        self.rolePersonality.setText(voice.get("personality", ""))
+        self.roleGoal.setText(voice.get("goal", ""))
+        self.roleBoundaries.setPlainText("\n".join(voice.get("boundaries") or []))
+        self.roleFacts.setPlainText(roles.facts_to_text(row))
+        self.roleConstraints.setPlainText("\n".join(row.get("constraints") or []))
+        vault = [str(item.get("label", "")) for item in row.get("vault") or []]
+        self.roleVault.setText("；".join(vault) if vault else T("（空）"))
+        self.roleStatus.setText("")
+
+    def _fill_contact(self, chat):
+        row = roles.contact(chat)
+        self.contactWho.setText(T("当前会话：") + (chat or T("未识别")))
+        for attr, key in (("contactName", "display_name"), ("contactCompany", "company"),
+                          ("contactPosition", "position"), ("contactSource", "source"),
+                          ("contactStage", "stage"), ("contactNeeds", "needs")):
+            getattr(self, attr).setText(str(row.get(key) or ""))
+        self.contactNotes.setPlainText(str(row.get("notes") or ""))
+        self.contactStatus.setText("")
+
+    def _profile_role_changed(self, index):
+        if not (0 <= index < len(self._role_ids)):
+            return
+        role_id = self._role_ids[index]
+        roles.bind_role(self.current_chat(), role_id)
+        self._fill_role(roles.role(role_id))
+
+    def _save_role(self):
+        index = self.profileRoleBox.currentIndex()
+        if not (0 <= index < len(self._role_ids)):
+            return
+        try:
+            row = roles.update_role(
+                self._role_ids[index], name=self.roleName.text(),
+                scene=self._scene_ids[self.roleScene.currentIndex()],
+                identity=self.roleIdentity.text(), tone=self.roleTone.text(),
+                personality=self.rolePersonality.text(), goal=self.roleGoal.text(),
+                boundaries=self.roleBoundaries.toPlainText(),
+                constraints=self.roleConstraints.toPlainText(),
+                facts_text=self.roleFacts.toPlainText())
+        except (ValueError, OSError) as exc:
+            self.roleStatus.setText(f"{T('保存失败')}：{exc}")
+            self.set_status(f"{T('保存失败')}：{exc}", "warning")
+            return
+        self._fill_role(row)
+        self.roleStatus.setText(T("已保存，下一条消息按新档案生成"))
+
+    def _save_contact(self):
+        try:
+            roles.upsert_contact(
+                self.current_chat(), display_name=self.contactName.text().strip(),
+                company=self.contactCompany.text().strip(), position=self.contactPosition.text().strip(),
+                source=self.contactSource.text().strip(), stage=self.contactStage.text().strip(),
+                needs=self.contactNeeds.text().strip(), notes=self.contactNotes.toPlainText().strip())
+        except OSError as exc:
+            self.contactStatus.setText(f"{T('保存失败')}：{exc}")
+            return
+        self.contactStatus.setText(T("已保存"))
 
     def _clear_cards(self):
         for card in self.cards:

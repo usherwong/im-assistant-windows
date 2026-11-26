@@ -241,6 +241,127 @@ def upsert_contact(chat: str | None, **fields) -> dict:
     return row
 
 
+# ── 角色编辑（M2 的档案面板用）────────────────────────────────────────────────
+
+_FACT_SEP = re.compile(r"\s*[|｜]\s*")
+
+
+def facts_to_text(role_row: dict) -> str:
+    """facts → 面板里的多行文本。格式：标签 | 内容 | 补充 | public/personal | 别名1,别名2"""
+    lines = []
+    for fact in role_row.get("facts") or []:
+        lines.append(" | ".join([
+            str(fact.get("label", "")), str(fact.get("value", "")), str(fact.get("detail", "")),
+            str(fact.get("sensitivity", "public")), ",".join(fact.get("aliases") or []),
+        ]).rstrip(" |"))
+    return "\n".join(lines)
+
+
+def parse_facts(text: str) -> list[dict]:
+    """面板文本 → facts。空行忽略；只有「标签 | 内容」也能用，敏感度默认 public。"""
+    facts = []
+    for line in str(text or "").splitlines():
+        if not line.strip():
+            continue
+        parts = [p.strip() for p in _FACT_SEP.split(line.strip())]
+        parts += [""] * (5 - len(parts))
+        label, value, detail, sensitivity, aliases = parts[:5]
+        sensitivity = sensitivity if sensitivity in ("public", "personal", "secret") else "public"
+        facts.append({
+            "id": re.sub(r"\W+", "_", label).strip("_") or f"fact{len(facts) + 1}",
+            "label": label, "value": value, "detail": detail,
+            "sensitivity": sensitivity, "reveal": "on_ask", "group": "basic",
+            "aliases": [a.strip() for a in re.split(r"[,，、]", aliases) if a.strip()],
+        })
+    return facts
+
+
+def update_role(role_id: str, *, name: str | None = None, scene: str | None = None,
+                identity: str | None = None, tone: str | None = None,
+                personality: str | None = None, goal: str | None = None,
+                boundaries: list[str] | str | None = None,
+                constraints: list[str] | str | None = None,
+                facts_text: str | None = None) -> dict:
+    """保存一个角色（只改传进来的字段）。facts_text 走 parse_facts；校验不过抛 ValueError。"""
+    data = load()
+    row = data["roles"].get(role_id)
+    if row is None:
+        raise ValueError(f"没有这个角色：{role_id}")
+    if name is not None:
+        row["name"] = name.strip()
+    if scene is not None:
+        row["scene"] = scene
+    voice = row.setdefault("voice", {})
+    for key, value in (("identity", identity), ("tone", tone),
+                       ("personality", personality), ("goal", goal)):
+        if value is not None:
+            voice[key] = value.strip()
+    if boundaries is not None:
+        voice["boundaries"] = _lines(boundaries)
+    if constraints is not None:
+        row["constraints"] = _lines(constraints)
+    if facts_text is not None:
+        row["facts"] = parse_facts(facts_text)
+    problems = validate(row)
+    if problems:
+        raise ValueError("；".join(problems))
+    save(data)
+    return row
+
+
+def _lines(value) -> list[str]:
+    if isinstance(value, str):
+        return [line.strip() for line in value.splitlines() if line.strip()]
+    return [str(line).strip() for line in (value or []) if str(line).strip()]
+
+
+def set_default(role_id: str) -> None:
+    data = load()
+    if role_id in data["roles"]:
+        data["default"] = role_id
+        save(data)
+
+
+def add_role(name: str, copy_from: str | None = None) -> dict:
+    """新建角色：复制一份模板（默认复制当前默认角色的口吻骨架，facts/vault 留空）。"""
+    data = load()
+    base = data["roles"].get(copy_from or "") or data["roles"][data["default"]]
+    rid = re.sub(r"[^\w\u4e00-\u9fff]+", "-", name.strip()).strip("-") or f"role{len(data['roles']) + 1}"
+    if rid in data["roles"]:
+        rid = f"{rid}-{len(data['roles']) + 1}"
+    row = {
+        "id": rid, "name": name.strip(), "aliases": [name.strip()],
+        "scene": base.get("scene", DEFAULT_SCENE),
+        "voice": dict(base.get("voice") or {}),
+        "facts": [], "vault": [], "constraints": list(base.get("constraints") or []),
+        "profile": "",
+    }
+    row["voice"]["identity"] = ""
+    data["roles"][rid] = row
+    save(data)
+    return row
+
+
+def delete_role(role_id: str) -> bool:
+    """删角色：不能删最后一个；删掉的如果是默认，默认指向剩下的第一个；相关会话解绑。"""
+    data = load()
+    if role_id not in data["roles"] or len(data["roles"]) <= 1:
+        return False
+    data["roles"].pop(role_id)
+    if data.get("default") == role_id:
+        data["default"] = next(iter(data["roles"]))
+    save(data)
+    contacts = load_contacts()
+    changed = False
+    for row in contacts["contacts"].values():
+        if row.get("role_id") == role_id:
+            row.pop("role_id", None)
+            changed = True
+    if changed:
+        save_contacts(contacts)
+    return True
+
+
 def _norm(text: str) -> str:
     return re.sub(r"[\s\W_]+", "", str(text or "")).lower()
 
@@ -329,4 +450,23 @@ if __name__ == "__main__":
     # 校验能挡住 secret 混进 facts
     bad = dict(seed, facts=seed["facts"] + [{"id": "x", "label": "泄露", "sensitivity": "secret"}])
     assert any("vault" in p for p in validate(bad))
+    # facts 文本 ↔ dict 往返
+    text = facts_to_text(seed)
+    again = parse_facts(text)
+    assert len(again) == len(seed["facts"]) and again[0]["label"] == seed["facts"][0]["label"], again[:2]
+    assert parse_facts("住址 | 上海 | 浦东 | personal | 住哪,地址")[0]["aliases"] == ["住哪", "地址"]
+    assert parse_facts("只有标签 | 值")[0]["sensitivity"] == "public"
+    # 角色编辑：改口吻、存 facts、secret 混进来要拦
+    edited = update_role("dustin", tone="更短、更快", facts_text="城市 | 上海")
+    assert edited["voice"]["tone"] == "更短、更快" and len(edited["facts"]) == 1
+    try:
+        update_role("dustin", facts_text="秘密 | x | y | secret")
+        raise SystemExit("secret 应当被拦下")
+    except ValueError as exc:
+        assert "vault" in str(exc)
+    update_role("dustin", facts_text=facts_to_text(seed))  # 恢复
+    # 新建 / 删除
+    extra = add_role("测试角色")
+    assert extra["id"] in all_roles() and len(extra["facts"]) == 0
+    assert delete_role(extra["id"]) and extra["id"] not in all_roles()
     print("roles ok")
