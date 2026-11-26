@@ -262,7 +262,7 @@ class Overlay:
         self._shown = ""  # 界面上正在看的会话（浏览时和上面不一样）
         self.win = _MainWindow(self._relayout)
         self.win.setObjectName("assistantWindow")
-        self.win.setWindowTitle("JevChat-Windows")
+        self.win.setWindowTitle("京安智猎")
         self.win.setWindowFlags(Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.win.setStyleSheet(
             "QWidget#assistantWindow { background: #f5f7f6; border: 1px solid #dce3de; border-radius: 14px; }"
@@ -276,11 +276,10 @@ class Overlay:
         title = QHBoxLayout(header)
         title.setContentsMargins(18, 12, 10, 10)
         title.setSpacing(8)
-        name = _label("Jev", 20, "#233c2f", True)
-        name.setFixedWidth(40)
+        name = _label("京安智猎", 20, "#233c2f", True)  # 中文名比原来的「Jev」宽，别再钉死宽度
         name.setAttribute(Qt.WA_TransparentForMouseEvents)
         title.addWidget(name)
-        self.subtitle = _label("JevChat-Windows", 12, _MUTED)
+        self.subtitle = _label("聊天回复助手", 12, _MUTED)
         self.subtitle.setAttribute(Qt.WA_TransparentForMouseEvents)
         title.addWidget(self.subtitle, 1)
         self.captureSwitch = SwitchButton(header)
