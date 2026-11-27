@@ -564,7 +564,7 @@ class Overlay:
             return card, verdict, detail, note
 
         self.chatCard, self.chatVerdict, self.chatChips, self.chatWhy = _judge_card("聊天研判")
-        self.riskCard, self.riskVerdict, self.riskItems, self.riskWhy = _judge_card("风险研判")
+        self.riskCard, self.riskVerdict, self.riskItems, self.riskWhy = _judge_card("安防干警")
 
         body.addWidget(self.summaryCard)
         self._render_summary()
@@ -1636,7 +1636,7 @@ class Overlay:
         self.chatChips.setText(" ｜ ".join(chips))
         why = conclusion.get("why") or ""
         if chat.get("risk_warning"):
-            why = "⚠ " + T("有高风险信号，先看风险研判") + ("；" + why if why else "")
+            why = "⚠ " + T("有高风险信号，先看安防干警") + ("；" + why if why else "")
         self.chatWhy.setText((T("依据") + "：" + why) if why else "")
         self.chatCard.show()
 
