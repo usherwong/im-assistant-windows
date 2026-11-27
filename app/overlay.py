@@ -235,11 +235,13 @@ class _ReplyCard(_Surface):
 
 class Overlay:
     def __init__(self, on_fill, on_toggle_capture=None, on_target_change=None, result_of=None,
-                 on_toggle_debug=None, on_language_changed=None, on_summary=None):
+                 on_toggle_debug=None, on_language_changed=None, on_summary=None,
+                 on_portrait=None):
         """result_of(会话名) → 那个会话上次的结果或 None；切着看别的会话时用它把旧结果放回来。
         on_target_change(会话名, 人名) → 用户在群里挑了回复对象。
         on_toggle_debug(开不开) → 开关调试视图那个独立窗口。
-        on_summary(会话名) → 用户点了「总结」，后台跑一次。"""
+        on_summary(会话名) → 用户点了「总结」，后台跑一次。
+        on_portrait(会话名) → 用户点了「更新画像」，后台跑一次。"""
         self.app = QApplication.instance() or QApplication([])
         setTheme(Theme.LIGHT)
         setThemeColor(_GREEN, save=False)
@@ -541,25 +543,28 @@ class Overlay:
         sbox.addWidget(self.summaryBody)
         self.summaryNote = _label("", 11, _MUTED)
         sbox.addWidget(self.summaryNote)
-        # ── 研判（聊天研判 + 风险研判，结论由规则合成，模型只给信号）──
-        self.judgeCard = _Surface()
-        jbox = QVBoxLayout(self.judgeCard)
-        jbox.setContentsMargins(14, 12, 14, 12)
-        jbox.setSpacing(6)
-        jrow = QHBoxLayout()
-        jrow.addWidget(_tlabel("研判", 13, "#304c3c", True), 1)
-        self.judgeConclusion = _label("", 12, _MUTED)
-        self.judgeConclusion.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        jrow.addWidget(self.judgeConclusion)
-        jbox.addLayout(jrow)
-        self.judgeChips = _label("", 12, "#42574a")
-        jbox.addWidget(self.judgeChips)
-        self.judgeRisks = _label("", 11, _MUTED)
-        jbox.addWidget(self.judgeRisks)
-        self.judgeWhy = _label("", 11, _MUTED)
-        jbox.addWidget(self.judgeWhy)
-        body.addWidget(self.judgeCard)
-        self.judgeCard.hide()
+        # ── 研判：聊天研判 + 风险研判（结论由规则合成，模型只给信号）──
+        def _judge_card(title):
+            card = _Surface()
+            box = QVBoxLayout(card)
+            box.setContentsMargins(14, 12, 14, 12)
+            box.setSpacing(6)
+            row = QHBoxLayout()
+            row.addWidget(_tlabel(title, 13, "#304c3c", True), 1)
+            verdict = _label("", 12, _MUTED)
+            verdict.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            row.addWidget(verdict)
+            box.addLayout(row)
+            detail = _label("", 12, "#42574a")
+            box.addWidget(detail)
+            note = _label("", 11, _MUTED)
+            box.addWidget(note)
+            body.addWidget(card)
+            card.hide()
+            return card, verdict, detail, note
+
+        self.chatCard, self.chatVerdict, self.chatChips, self.chatWhy = _judge_card("聊天研判")
+        self.riskCard, self.riskVerdict, self.riskItems, self.riskWhy = _judge_card("风险研判")
 
         body.addWidget(self.summaryCard)
         self._render_summary()
@@ -1268,7 +1273,8 @@ class Overlay:
             self.cands = []
             self.sends = []
             self._clear_cards()
-            self.judgeCard.hide()
+            self.chatCard.hide()
+            self.riskCard.hide()
             self.insight.hide()
             self.referenceNote.hide()
             self.empty.show()
@@ -1430,7 +1436,7 @@ class Overlay:
         save_role.clicked.connect(self._save_role)
         box.addWidget(save_role)
         box.addWidget(self.roleStatus)
-        body.addWidget(card)
+        role_card = card
 
         # —— 对方档案 ——
         card = _Surface()
@@ -1464,7 +1470,21 @@ class Overlay:
         save_contact.clicked.connect(self._save_contact)
         box.addWidget(save_contact)
         box.addWidget(self.contactStatus)
-        body.addWidget(card)
+        # —— 画像（自动生成，可改；放在对方档案里，好找）——
+        box.addWidget(_tlabel("画像", 14, "#304c3c", True))
+        self.portraitText = _label("", 12, "#42574a")
+        box.addWidget(self.portraitText)
+        self.portraitNote = _label("", 11, _MUTED)
+        box.addWidget(self.portraitNote)
+        portrait_row = QHBoxLayout()
+        self.portraitButton = PushButton(T("更新画像"))
+        self.portraitButton.clicked.connect(self._on_portrait_clicked)
+        portrait_row.addWidget(self.portraitButton)
+        portrait_row.addStretch(1)
+        box.addLayout(portrait_row)
+        contact_card = card
+        body.addWidget(contact_card)
+        body.addWidget(role_card)
 
     def open_profile(self):
         self._refresh_profile()
@@ -1518,6 +1538,7 @@ class Overlay:
             getattr(self, attr).setText(str(row.get(key) or ""))
         self.contactNotes.setPlainText(str(row.get("notes") or ""))
         self.contactStatus.setText("")
+        self._render_portrait(chat)
 
     def _profile_role_changed(self, index):
         if not (0 <= index < len(self._role_ids)):
@@ -1546,6 +1567,33 @@ class Overlay:
         self._fill_role(row)
         self.roleStatus.setText(T("已保存，下一条消息按新档案生成"))
 
+    # ── 人物画像 ─────────────────────────────────────────────────────────
+    def _on_portrait_clicked(self):
+        if self.on_portrait:
+            self.on_portrait(self.current_chat())
+
+    def _render_portrait(self, chat=None):
+        chat = chat if chat is not None else self.current_chat()
+        portrait = (roles.contact(chat) or {}).get("portrait") or {}
+        try:
+            from core.portrait import to_text
+        except ImportError:
+            from portrait import to_text
+        self.portraitText.setText(to_text(portrait) or T("还没有画像。点「更新画像」生成一份。"))
+        when = portrait.get("updated_at")
+        self.portraitNote.setText((T("更新于") + " " + when) if when else "")
+
+    def set_portrait_busy(self, chat, busy):
+        if chat != self.current_chat():
+            return
+        self.portraitButton.setEnabled(not busy)
+        self.portraitButton.setText(T("生成中…") if busy else T("更新画像"))
+
+    def show_portrait(self, chat, text, when):
+        if chat == self.current_chat():
+            self.portraitText.setText(text or T("还没有画像。点「更新画像」生成一份。"))
+            self.portraitNote.setText((T("更新于") + " " + when) if when else "")
+
     def _save_contact(self):
         try:
             roles.upsert_contact(
@@ -1561,43 +1609,47 @@ class Overlay:
     # ── 研判（M6）────────────────────────────────────────────────────────
     def _render_judgement(self, result):
         judge = (result or {}).get("judgement") or {}
-        if not judge:
-            self.judgeCard.hide()
+        chat = judge.get("chat") or {}
+        risk = judge.get("risk") or {}
+        if not chat and not risk:
+            self.chatCard.hide()
+            self.riskCard.hide()
             return
-        scene = scenes.get((result or {}).get("scene"))
         answers = (result or {}).get("answers") or {}
+        scene = scenes.get((result or {}).get("scene"))
         metrics = (result or {}).get("metrics") or {}
-        conclusion = judge.get("conclusion") or {}
+
+        conclusion = chat.get("conclusion") or {}
         color = {"go": _GREEN, "hold": "#996819", "slow": "#996819",
                  "caution": "#b44832", "stop": "#b44832"}.get(conclusion.get("level"), _MUTED)
-        self.judgeConclusion.setText(conclusion.get("text", ""))
+        self.chatVerdict.setText(conclusion.get("text", ""))
         qss = f"BodyLabel {{ color: {color}; background: transparent; font-weight: 600; }}"
-        setCustomStyleSheet(self.judgeConclusion, qss, qss)
-
+        setCustomStyleSheet(self.chatVerdict, qss, qss)
         chips = []
-        if judge.get("style"):
-            chips.append(f"{T('风格')} {judge['style']}")
-        if judge.get("willingness"):
+        if chat.get("style"):
+            chips.append(f"{T('风格')} {chat['style']}")
+        if chat.get("willingness"):
             chips.append(f"{T('意愿')} {_choice(answers, 'willingness', scene)}")
         if metrics.get("her_count"):
             chips.append(f"{T('频率')} {app_metrics.fmt_frequency(metrics)}")
             chips.append(f"{T('信息量')} {app_metrics.fmt_volume(metrics)}")
-        self.judgeChips.setText(" ｜ ".join(chips))
-
-        risks = judge.get("risks") or []
-        if risks:
-            self.judgeRisks.setText(T("风险") + "：" + " ｜ ".join(
-                f"{r['kind']} {r['level']}" for r in risks))
-            self.judgeRisks.setStyleSheet("color: #b44832;")
-        else:
-            self.judgeRisks.setText(T("风险") + "：" + T("无"))
-            self.judgeRisks.setStyleSheet("")
+        self.chatChips.setText(" ｜ ".join(chips))
         why = conclusion.get("why") or ""
-        if risks and risks[0].get("why"):
-            why = (why + "；" if why else "") + risks[0]["why"]
-        self.judgeWhy.setText(T("依据") + "：" + why if why else "")
-        self.judgeCard.show()
+        if chat.get("risk_warning"):
+            why = "⚠ " + T("有高风险信号，先看风险研判") + ("；" + why if why else "")
+        self.chatWhy.setText((T("依据") + "：" + why) if why else "")
+        self.chatCard.show()
 
+        level = risk.get("level") or "低"
+        rcolor = {"低": _GREEN, "中": "#996819", "高": "#b44832"}.get(level, _MUTED)
+        self.riskVerdict.setText(f"{level} · {risk.get('disposition', '')}")
+        qss2 = f"BodyLabel {{ color: {rcolor}; background: transparent; font-weight: 600; }}"
+        setCustomStyleSheet(self.riskVerdict, qss2, qss2)
+        items = risk.get("items") or []
+        self.riskItems.setText(" ｜ ".join(f"{item['kind']} {item['level']}" for item in items)
+                               if items else T("四类都为低"))
+        self.riskWhy.setText((T("依据") + "：" + risk["why"]) if risk.get("why") else "")
+        self.riskCard.show()
     # ── 对话总结（M3）────────────────────────────────────────────────────
     def _on_summary_clicked(self):
         if self.on_summary:

@@ -24,6 +24,7 @@ from core.engine import analyze
 from core import scenes
 from core.summary import summarize, to_text
 from core.judgement import assess
+from core.portrait import to_text as portrait_text, update_portrait
 import os
 from app.i18n import T
 
@@ -281,6 +282,8 @@ def dock():
 summaries = {}          # {会话名: {"text": 五段文本, "rev": 生成时的版本}}
 summary_busy = set()    # 正在总结的会话（防止连点）
 summary_results = queue.Queue()
+portrait_results = queue.Queue()
+portrait_busy = set()
 
 
 def start_summary(title):
@@ -311,6 +314,68 @@ def summary_bg(title, msgs, revision):
         summary_results.put(("ok", title, data, revision))
     except Exception as e:
         summary_results.put(("err", title, str(e), revision))
+
+
+
+def start_portrait(title):
+    """生成/更新画像：后台跑一次，结果回队列（存进 contacts.json）。"""
+    if not title or title in portrait_busy:
+        return
+    if not settings.has_llm_key():
+        ov.set_status(lambda name=settings.draft_provider_name():
+                      f"{T('起草来源 ')}{name}{T(' 没填密钥，去设置里补上')}", "warning")
+        return
+    chat = chat_of(title)
+    if not chat["history"]:
+        return
+    portrait_busy.add(title)
+    if title == ov.current_chat():
+        ov.set_portrait_busy(title, True)
+    threading.Thread(target=portrait_bg,
+                     args=(title, list(chat["history"]), dict(chat.get("result") or {})),
+                     daemon=True).start()
+
+
+def portrait_bg(title, msgs, result):
+    try:
+        role = roles.role_for(title)
+        contact = roles.contact(title) or None
+        times = chat_of(title).get("times") or []
+        local = metrics.summarize(msgs, times[-len(msgs):] if len(times) >= len(msgs) else times)
+        portrait = update_portrait(
+            msgs, role=role, contact=contact, answers=result.get("answers"),
+            metrics=local, previous=(contact or {}).get("portrait"),
+            provider=settings.draft_provider(), model=settings.draft_model() or None,
+            base_url=settings.draft_base_url() or None)
+        roles.upsert_contact(title, portrait=portrait)
+        portrait_results.put(("ok", title, portrait))
+    except Exception as e:
+        portrait_results.put(("err", title, str(e)[:120]))
+
+
+def _maybe_auto_portrait():
+    """晚上聊完自动更新画像：当天有消息 + 最后一条静默 >=30 分钟 + 已过 20:00 + 今天还没更新过。"""
+    if not settings.has_llm_key():
+        return
+    now = datetime.now()
+    if now.hour < 20:
+        return
+    title = ov.current_chat()
+    if not title:
+        return
+    chat = chat_of(title)
+    times = chat.get("times") or []
+    if not times or times[-1].date() != now.date():
+        return
+    if (now - times[-1]).total_seconds() < 30 * 60:
+        return
+    portrait = (roles.contact(title) or {}).get("portrait") or {}
+    if portrait.get("updated_at") == now.strftime("%Y-%m-%d"):
+        return
+    if state.get("auto_portrait") == title:
+        return
+    state["auto_portrait"] = title
+    start_portrait(title)
 
 
 def tick():
@@ -345,6 +410,15 @@ def tick():
                 ov.set_busy(False)
                 ov.set_status("生成失败，请检查网络和服务设置；新消息到来后会重试。", "error")
                 ov.log(r)
+        while not portrait_results.empty():
+            kind, title, payload = portrait_results.get()
+            portrait_busy.discard(title)
+            ov.set_portrait_busy(title, False)
+            if kind == "ok":
+                ov.show_portrait(title, portrait_text(payload), payload.get("updated_at", ""))
+            elif title == ov.current_chat():
+                ov.set_status(f"{T('画像更新失败')}：{payload}", "warning")
+        _maybe_auto_portrait()
         while not summary_results.empty():
             kind, title, payload, revision = summary_results.get()
             summary_busy.discard(title)
@@ -371,7 +445,7 @@ if __name__ == "__main__":  # Windows 的 spawn 会让子进程重新执行本�
     docked = None  # 上次贴靠用的窗口矩形；窗口没动就不用重新贴
     ov = Overlay(on_fill=fill_reply, on_toggle_capture=on_toggle_capture,
                  on_target_change=on_target_change, on_toggle_debug=set_debug,
-                 on_language_changed=on_language_changed, on_summary=start_summary,
+                 on_language_changed=on_language_changed, on_summary=start_summary, on_portrait=start_portrait,
                  result_of=lambda t: chats.get(t, {}).get("result"))
     try:
         state["hwnd"], found = find_chat_hwnd()
