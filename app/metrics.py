@@ -48,8 +48,10 @@ def summarize(history: list, times: list[datetime] | None = None) -> dict:
 
     stamps = [w for _, w in her if w is not None]
     days = _span_days(stamps) if len(stamps) >= 2 else 0.0
-    per_day = (len(stamps) / days) if days > 0 else None
     span_hours = ((max(stamps) - min(stamps)).total_seconds() / 3600.0) if len(stamps) >= 2 else 0.0
+    # 只看到一轮对话（几分钟内连着发）时算"每天几条"会得出 12960 这种鬼数字：
+    # 跨度不足 6 小时、或对方消息少于 6 条，就不给频率，界面显示"样本不足"。
+    per_day = (len(stamps) / days) if (days > 0 and span_hours >= 6 and len(stamps) >= 6) else None
 
     # 他的回复间隔：我发完之后，他下一条隔了多久
     gaps = []
@@ -124,6 +126,13 @@ if __name__ == "__main__":
     assert m["her_count"] == 3 and m["me_count"] == 1
     assert m["question_ratio"] and m["question_ratio"] >= 0.3
     assert m["median_gap_min"] == 30.0, m["median_gap_min"]
+    # 一轮之内连着发的几条，不算"每天几条"（跨度不足 6 小时 → 样本不足）
+    burst = [("her", "在吗", datetime(2026, 11, 26, 16, 20)),
+             ("her", "有个事", datetime(2026, 11, 26, 16, 21)),
+             ("her", "你方便吗", datetime(2026, 11, 26, 16, 22))]
+    bm = summarize([(w, t) for w, t, _ in burst], [x for _, _, x in burst])
+    assert bm["per_day"] is None, bm["per_day"]
+    assert fmt_frequency(bm) == "样本不足"
     assert style_of(m, None) in ("中", "热"), style_of(m, None)
     assert fmt_frequency({"per_day": 1.234}) == "1.2 条/天"
     assert fmt_volume({"avg_len": 12.4}) == "均 12 字"

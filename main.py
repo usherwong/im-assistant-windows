@@ -15,7 +15,7 @@ import traceback
 from collections import deque
 from datetime import datetime
 
-from app import metrics, roles, settings, update, worker
+from app import metrics, net, roles, settings, update, worker
 from app.capture import dpi_aware, find_chat_hwnd, integrity_rid, window_rect
 from app.fill import fill
 from app.overlay import Overlay
@@ -438,6 +438,7 @@ def tick():
 if __name__ == "__main__":  # Windows 的 spawn 会让子进程重新执行本文件，没这行就无限套娃开进程
     multiprocessing.freeze_support()  # 打包成 exe 后 spawn 出来的子进程会重跑一遍 exe，没这行就无限弹界面
     dpi_aware()  # 必须在建窗口和截图之前：200% 缩放下只 SetProcessDPIAware 会拿到半分辨率
+    net_msg = net.setup()  # 探一遍本地代理：TUN 下个别域名 TLS 走不通，走代理端口才行
     q = multiprocessing.Queue()
     capture_on = multiprocessing.Event()  # 父子进程共用的开关，置位=采集
     debug_on = multiprocessing.Event()  # 同上，置位=子进程往队列里送整帧给调试窗
@@ -447,6 +448,7 @@ if __name__ == "__main__":  # Windows 的 spawn 会让子进程重新执行本�
                  on_target_change=on_target_change, on_toggle_debug=set_debug,
                  on_language_changed=on_language_changed, on_summary=start_summary, on_portrait=start_portrait,
                  result_of=lambda t: chats.get(t, {}).get("result"))
+    ov.log("[网络] " + net_msg)
     try:
         state["hwnd"], found = find_chat_hwnd()
         state["app"], state["app_obj"] = found.key, found
