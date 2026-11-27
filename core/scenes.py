@@ -185,6 +185,54 @@ def _professional(kind: str) -> tuple[dict, dict, tuple]:
                             "they may not want it settled here."),
             },
         },
+        "willingness": {
+            "type": "choice",
+            "instructions": (
+                "Judging only from behaviour in the transcript: is the counterpart willing to keep "
+                "engaging with this conversation? Do not reward politeness; look at whether they "
+                "start topics, ask questions, or move things forward themselves."
+            ),
+            "criteria": {
+                "open": ("Keeps the thread alive on their own: asks questions, brings up their own "
+                         "needs, agrees to or proposes a next step."),
+                "polite_only": ("Answers politely and nothing more — short replies, no questions back, "
+                                "never initiates. Friendly tone, zero initiative."),
+                "winding_down": ("Wrapping up: 'let us talk later', 'keep me posted', 'busy right now', "
+                                 "no new detail, no commitment."),
+                "declined": ("Clearly does not want to continue: says no, stop, not interested, "
+                             "or goes silent after a direct ask."),
+            },
+        },
+        "risk_compliance": {
+            "type": "choice",
+            "instructions": (
+                "Business-compliance red flags raised by the counterpart in this transcript. "
+                "Judge what they actually asked for, not what they hinted at vaguely."
+            ),
+            "criteria": {
+                "none": "No request that would need a private arrangement or off-book process.",
+                "soft": ("Probing whether there is room to bend things: 'any way to speed this up', "
+                         "'can you make the numbers work', asking for documents they should not need."),
+                "high": ("Asks for a kickback, a personal favour in exchange for the deal, an off-book "
+                         "payment, or internal documents/credentials; or their claimed identity does "
+                         "not fit what they ask for."),
+            },
+        },
+        "risk_info": {
+            "type": "choice",
+            "instructions": (
+                "How hard is the counterpart pushing for information that should not be shared "
+                "on this channel — floor prices, customer lists, internal process detail, "
+                "screenshots, or moving the chat to a private channel?"
+            ),
+            "criteria": {
+                "none": "No push for sensitive information or for a different channel.",
+                "soft": ("Curious about details that are borderline (exact discount room, other "
+                         "clients, internal approval steps) without pressure."),
+                "high": ("Demands screenshots/forwards, insists on a private or untraceable channel, "
+                         "or asks for the customer list, cost structure or internal documents."),
+            },
+        },
         "should_push": {
             "type": "noul",
             "instructions": (
@@ -219,6 +267,10 @@ def _professional(kind: str) -> tuple[dict, dict, tuple]:
             "concern": {"not_raised": "没提顾虑", "resolved": "顾虑已解决",
                         "still_open": "顾虑还开着", "reopened": "顾虑又提了",
                         "avoided": "提了又岔开"},
+            "willingness": {"open": "愿意继续", "polite_only": "只礼貌回应",
+                            "winding_down": "在收尾", "declined": "不想继续"},
+            "risk_compliance": {"none": "无", "soft": "试探通融", "high": "私下条件/灰色流程"},
+            "risk_info": {"none": "无", "soft": "问敏感细节", "high": "要截图/名单/换渠道"},
             "engagement": {},
         }
     else:
@@ -242,6 +294,10 @@ def _professional(kind: str) -> tuple[dict, dict, tuple]:
             "concern": {"not_raised": "没提顾虑", "resolved": "顾虑已解决",
                         "still_open": "顾虑还开着", "reopened": "顾虑又提了",
                         "avoided": "提了又岔开"},
+            "willingness": {"open": "愿意继续", "polite_only": "只礼貌回应",
+                            "winding_down": "在收尾", "declined": "不想继续"},
+            "risk_compliance": {"none": "无", "soft": "试探通融", "high": "私下条件/灰色流程"},
+            "risk_info": {"none": "无", "soft": "问敏感细节", "high": "要截图/名单/换渠道"},
             "engagement": {},
         }
     guide = (("stance", "对方状态"), ("need", "对方需要"), ("best_action", "建议动作"),

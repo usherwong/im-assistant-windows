@@ -20,7 +20,7 @@ from qfluentwidgets import (
     setCustomStyleSheet, setFont, setTheme, setThemeColor,
 )
 
-from app import i18n, roles, settings
+from app import i18n, metrics as app_metrics, roles, settings
 from app.version import VERSION
 from core import jev_client, llm, providers, scenes
 from core.questions import CHOICE_LABELS
@@ -541,6 +541,26 @@ class Overlay:
         sbox.addWidget(self.summaryBody)
         self.summaryNote = _label("", 11, _MUTED)
         sbox.addWidget(self.summaryNote)
+        # ── 研判（聊天研判 + 风险研判，结论由规则合成，模型只给信号）──
+        self.judgeCard = _Surface()
+        jbox = QVBoxLayout(self.judgeCard)
+        jbox.setContentsMargins(14, 12, 14, 12)
+        jbox.setSpacing(6)
+        jrow = QHBoxLayout()
+        jrow.addWidget(_tlabel("研判", 13, "#304c3c", True), 1)
+        self.judgeConclusion = _label("", 12, _MUTED)
+        self.judgeConclusion.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        jrow.addWidget(self.judgeConclusion)
+        jbox.addLayout(jrow)
+        self.judgeChips = _label("", 12, "#42574a")
+        jbox.addWidget(self.judgeChips)
+        self.judgeRisks = _label("", 11, _MUTED)
+        jbox.addWidget(self.judgeRisks)
+        self.judgeWhy = _label("", 11, _MUTED)
+        jbox.addWidget(self.judgeWhy)
+        body.addWidget(self.judgeCard)
+        self.judgeCard.hide()
+
         body.addWidget(self.summaryCard)
         self._render_summary()
 
@@ -1248,6 +1268,7 @@ class Overlay:
             self.cands = []
             self.sends = []
             self._clear_cards()
+            self.judgeCard.hide()
             self.insight.hide()
             self.referenceNote.hide()
             self.empty.show()
@@ -1263,6 +1284,7 @@ class Overlay:
         self.set_busy(False)
         self._current = bool(self.cands)
         self._clear_cards()
+        self._render_judgement(result)
         self.sends = list(result.get("sends") or [])   # 真正发出去的文本（对方语言）；旧结果没有就退回 display
         best = result.get("best_index", 0)
         if best not in range(len(self.cands)):
@@ -1535,6 +1557,46 @@ class Overlay:
             self.contactStatus.setText(f"{T('保存失败')}：{exc}")
             return
         self.contactStatus.setText(T("已保存"))
+
+    # ── 研判（M6）────────────────────────────────────────────────────────
+    def _render_judgement(self, result):
+        judge = (result or {}).get("judgement") or {}
+        if not judge:
+            self.judgeCard.hide()
+            return
+        scene = scenes.get((result or {}).get("scene"))
+        answers = (result or {}).get("answers") or {}
+        metrics = (result or {}).get("metrics") or {}
+        conclusion = judge.get("conclusion") or {}
+        color = {"go": _GREEN, "hold": "#996819", "slow": "#996819",
+                 "caution": "#b44832", "stop": "#b44832"}.get(conclusion.get("level"), _MUTED)
+        self.judgeConclusion.setText(conclusion.get("text", ""))
+        qss = f"BodyLabel {{ color: {color}; background: transparent; font-weight: 600; }}"
+        setCustomStyleSheet(self.judgeConclusion, qss, qss)
+
+        chips = []
+        if judge.get("style"):
+            chips.append(f"{T('风格')} {judge['style']}")
+        if judge.get("willingness"):
+            chips.append(f"{T('意愿')} {_choice(answers, 'willingness', scene)}")
+        if metrics.get("her_count"):
+            chips.append(f"{T('频率')} {app_metrics.fmt_frequency(metrics)}")
+            chips.append(f"{T('信息量')} {app_metrics.fmt_volume(metrics)}")
+        self.judgeChips.setText(" ｜ ".join(chips))
+
+        risks = judge.get("risks") or []
+        if risks:
+            self.judgeRisks.setText(T("风险") + "：" + " ｜ ".join(
+                f"{r['kind']} {r['level']}" for r in risks))
+            self.judgeRisks.setStyleSheet("color: #b44832;")
+        else:
+            self.judgeRisks.setText(T("风险") + "：" + T("无"))
+            self.judgeRisks.setStyleSheet("")
+        why = conclusion.get("why") or ""
+        if risks and risks[0].get("why"):
+            why = (why + "；" if why else "") + risks[0]["why"]
+        self.judgeWhy.setText(T("依据") + "：" + why if why else "")
+        self.judgeCard.show()
 
     # ── 对话总结（M3）────────────────────────────────────────────────────
     def _on_summary_clicked(self):

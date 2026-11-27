@@ -13,8 +13,9 @@ import threading
 import time
 import traceback
 from collections import deque
+from datetime import datetime
 
-from app import roles, settings, update, worker
+from app import metrics, roles, settings, update, worker
 from app.capture import dpi_aware, find_chat_hwnd, integrity_rid, window_rect
 from app.fill import fill
 from app.overlay import Overlay
@@ -22,6 +23,7 @@ from app.version import VERSION
 from core.engine import analyze
 from core import scenes
 from core.summary import summarize, to_text
+from core.judgement import assess
 import os
 from app.i18n import T
 
@@ -139,6 +141,11 @@ def analyze_bg(msgs, title, revision, reply_to=None):
                          jev_model=settings.jev_model() or None,
                          role=role, contact=contact or None, facts=facts)
         result["role"] = role.get("name", "")
+        # 研判：本地指标（频率/字数/问句比）+ 判断答案 → 结论和风险（规则合成，不让模型发挥）
+        times = chat_of(title).get("times") or []
+        local = metrics.summarize(msgs, times[-len(msgs):] if len(times) >= len(msgs) else times)
+        result["metrics"] = local
+        result["judgement"] = assess(result.get("answers") or {}, local, scenes.for_role(role))
         results.put(("ok", result, title, revision))
     except Exception as e:
         results.put(("err", f"{T('分析失败: ')}{e}", title, revision))
@@ -235,6 +242,7 @@ def drain():
         ov.mark_summary_stale(title)  # 总结还在，但已经落后于对话了
         for who, name, text in new:
             chat["history"].append((who, text, name))
+            chat.setdefault("times", []).append(datetime.now())
             ov.log_message(who, text, name, chat=title)
             if who == "her" and name:  # 群里发过言的人，去重后最近的排最前
                 if name in chat["senders"]:
