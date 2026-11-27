@@ -21,15 +21,19 @@ _MAX_FACT_CHARS = 60
 _MAX_HITS = 3
 
 
-def _root() -> str:
-    """跟 settings 一样的口径：打包后在 exe 旁边，源码跑在仓库根目录。"""
-    if getattr(sys, "frozen", False):
-        return os.path.dirname(sys.executable)
-    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# 数据目录跟 settings 一致：用户目录（或 JAZL_HOME），不写 exe 旁边
+try:
+    from app.settings import data_dir as _data_dir
+except ImportError:
+    from settings import data_dir as _data_dir
 
 
-_ROLES = os.path.join(_root(), "roles.json")
-_CONTACTS = os.path.join(_root(), "contacts.json")
+def _roles_path() -> str:
+    return os.path.join(_data_dir(), "roles.json")
+
+
+def _contacts_path() -> str:
+    return os.path.join(_data_dir(), "contacts.json")
 
 # ── 种子档案：第一个角色（虚构人物，不对应任何真实个人）───────────────────────────
 SEED_ROLE: dict = {
@@ -140,7 +144,7 @@ def _empty() -> dict:
 def load() -> dict:
     """读 roles.json；没有就写一份种子档案（第一个角色）。坏文件一律当空表，不让它炸启动。"""
     try:
-        with open(_ROLES, encoding="utf-8") as f:
+        with open(_roles_path(), encoding="utf-8") as f:
             data = json.load(f)
         if not isinstance(data, dict) or not isinstance(data.get("roles"), dict):
             raise ValueError("bad shape")
@@ -158,7 +162,7 @@ def load() -> dict:
 
 def save(data: dict) -> None:
     data["version"] = 1
-    with open(_ROLES, "w", encoding="utf-8") as f:
+    with open(_roles_path(), "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
@@ -178,7 +182,7 @@ def default_role() -> dict:
 
 def load_contacts() -> dict:
     try:
-        with open(_CONTACTS, encoding="utf-8") as f:
+        with open(_contacts_path(), encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, dict) and isinstance(data.get("contacts"), dict):
             return data
@@ -189,7 +193,7 @@ def load_contacts() -> dict:
 
 def save_contacts(data: dict) -> None:
     data["version"] = 1
-    with open(_CONTACTS, "w", encoding="utf-8") as f:
+    with open(_contacts_path(), "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 

@@ -10,13 +10,58 @@ from __future__ import annotations
 import ctypes
 import json
 import os
-import sys  # 只为下面这一处：打包后 __file__ 指向临时解包目录，config.json 得放在 exe 旁边才存得住
+import shutil
+import sys  #：打包后 __file__ 指向临时解包目录，config.json 得放在 exe 旁边才存得住
 
 from core.providers import CUSTOM, DRAFT_PROVIDERS, JEV_ENV, JEV_PROVIDERS, LEGACY, LLM_ENV
 
-_ROOT = (os.path.dirname(sys.executable) if getattr(sys, "frozen", False)
-         else os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-_CONFIG = os.path.join(_ROOT, "config.json")
+# 数据目录：程序放哪都行，配置/档案统一写在用户目录，不再写 exe 旁边。
+#   JAZL_HOME             → 优先（便携、多开测试）
+#   %LOCALAPPDATA%\jazl   → 默认
+# 老的 exe 旁边那套文件在首次启动时**复制**过来（不删源）。
+_LEGACY_ROOT = (os.path.dirname(sys.executable) if getattr(sys, "frozen", False)
+                else os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_DATA_FILES = ("config.json", "roles.json", "contacts.json")
+_DATA_DIR: str | None = None
+
+
+def _migrate(root: str) -> None:
+    """把 exe 旁边的老文件复制到新目录；目标已存在就不动，源文件保留。"""
+    if os.path.abspath(root) == os.path.abspath(_LEGACY_ROOT):
+        return
+    for name in _DATA_FILES:
+        src = os.path.join(_LEGACY_ROOT, name)
+        dst = os.path.join(root, name)
+        if os.path.exists(src) and not os.path.exists(dst):
+            try:
+                shutil.copy2(src, dst)
+            except OSError:
+                pass
+
+
+def data_dir() -> str:
+    """数据目录（存在即返回，没有就建）。只算一次。"""
+    global _DATA_DIR
+    if _DATA_DIR:
+        return _DATA_DIR
+    override = (os.environ.get("JAZL_HOME") or "").strip()
+    if override:
+        root = os.path.abspath(override)
+    else:
+        base = os.environ.get("LOCALAPPDATA") or os.path.join(
+            os.path.expanduser("~"), "AppData", "Local")
+        root = os.path.join(base, "jazl")
+    try:
+        os.makedirs(root, exist_ok=True)
+    except OSError:
+        root = _LEGACY_ROOT  # 连用户目录都写不了：退回老位置，至少还能用
+    _migrate(root)
+    _DATA_DIR = root
+    return root
+
+
+def config_path() -> str:
+    return os.path.join(data_dir(), "config.json")
 _DEFAULT_RELATIONSHIP = ""  # 有了角色档案+对方档案之后，关系只是可选的备注（见 docs/ROADMAP.md 6.1）
 _DEFAULT_CONTEXT = 10
 _DEFAULT_JEV = "openrouter"
@@ -26,7 +71,7 @@ _DEFAULT_DRAFT = "deepseek"
 def _read(name: str, default=None):
     """读 config.json 里的一个字段；每次都重新读文件，改设置不用重启进程。"""
     try:
-        with open(_CONFIG, encoding="utf-8") as f:
+        with open(config_path(), encoding="utf-8") as f:
             value = json.load(f).get(name)
     except (OSError, ValueError):
         return default
@@ -192,5 +237,5 @@ def save(relationship_text: str | None = None, context_n: int | None = None, *,
     lang = _read("lang") if lang_text is None else lang_text.strip().lower()
     if lang is not None:
         data["lang"] = lang
-    with open(_CONFIG, "w", encoding="utf-8") as f:
+    with open(config_path(), "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False)

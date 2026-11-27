@@ -7,8 +7,8 @@ from datetime import datetime
 from math import isfinite
 from types import SimpleNamespace
 
-from PySide6.QtCore import QObject, QPoint, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QPixmap
+from PySide6.QtCore import QObject, QPoint, QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QColor, QDesktopServices, QFont, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QFrame, QHBoxLayout, QLabel, QPushButton, QSizeGrip, QSizePolicy,
     QStackedWidget, QVBoxLayout, QWidget,
@@ -599,6 +599,28 @@ class Overlay:
         self.languageOverrideHint = _tlabel("本次选择立即生效；下次启动仍优先使用 JEVCHAT_LANG 指定的语言。", 12, _MUTED)
         box.addWidget(self.languageOverrideHint)
         body.addWidget(language)
+
+        # —— 数据目录（配置/档案存这里，程序放哪都行）——
+        folder = _Surface()
+        box = QVBoxLayout(folder)
+        box.setContentsMargins(16, 16, 16, 18)
+        box.setSpacing(10)
+        box.addWidget(_tlabel("数据目录", 16, "#304c3c", True))
+        self.dataDirLabel = _label("", 12, "#42574a")
+        self.dataDirLabel.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        box.addWidget(self.dataDirLabel)
+        box.addWidget(self._hint(
+            "config.json / roles.json / contacts.json 都存在这里；程序解压到哪个目录都能跑，"
+            "重装也不丢。想换位置：设环境变量 JAZL_HOME。"))
+        open_row = QHBoxLayout()
+        self.openDataDirButton = PushButton(T("打开数据目录"))
+        self.openDataDirButton.clicked.connect(
+            lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(settings.data_dir())))
+        open_row.addWidget(self.openDataDirButton)
+        open_row.addStretch(1)
+        box.addLayout(open_row)
+        body.addWidget(folder)
+        self.dataDirLabel.setText(settings.data_dir())
 
         body.addWidget(_tlabel("调整关系背景，配置判断和起草用的两个模型。", 13, _MUTED))
         preference = _Surface()
