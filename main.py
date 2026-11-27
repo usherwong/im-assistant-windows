@@ -408,7 +408,9 @@ def tick():
                     ov.set_busy(False)
             else:
                 ov.set_busy(False)
-                ov.set_status("生成失败，请检查网络和服务设置；新消息到来后会重试。", "error")
+                # 把真实原因露出来：401 说明 key/来源不匹配，超时才是网络。只说"检查网络"会把人带偏。
+                reason = " ".join(str(r).split())[:90]
+                ov.set_status(f"{T('生成失败')}：{reason}", "error")
                 ov.log(r)
         while not portrait_results.empty():
             kind, title, payload = portrait_results.get()
